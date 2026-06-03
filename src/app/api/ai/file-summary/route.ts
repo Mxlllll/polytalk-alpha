@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { Language } from "@/lib/ai/mock";
+import { Language, supportedLanguages } from "@/lib/ai/mock";
 import { callAiJson, languageInstruction } from "@/lib/ai/provider";
 import { extractPdfTextFromBuffer } from "@/lib/server/pdf-text";
 
@@ -14,7 +14,7 @@ type FileSummaryResponse = {
 
 type FileSummaryMode = "course" | "assignment";
 
-const languages: Language[] = ["zh", "ko", "en"];
+const languages = supportedLanguages;
 const ocrLanguages = process.env.OCR_LANGUAGES || "eng+kor+chi_sim";
 
 function normalizeSummaryMode(value: unknown): FileSummaryMode {
@@ -57,7 +57,7 @@ Quality rules:
 - Avoid filler such as "this document discusses many aspects" or "students should study carefully".
 - Prefer concrete nouns, verbs, deliverables, concepts, dates, formats, and professor requirements.
 - Each section must be short, scannable, and separated with line breaks.
-- Return Chinese, Korean, and English versions with the same meaning.
+- Return Chinese, Korean, English, and Mongolian versions with the same meaning.
 - Return only valid JSON.
 `;
 
@@ -119,6 +119,7 @@ function fallbackSummary(fileName: string, reason: Record<Language, string> | st
           zh: reason,
           ko: reason,
           en: reason,
+          mn: reason,
         }
       : reason;
 
@@ -126,6 +127,7 @@ function fallbackSummary(fileName: string, reason: Record<Language, string> | st
     zh: `${fileName} 已上传。${localizedReason.zh}`,
     ko: `${fileName} 파일이 업로드되었습니다. ${localizedReason.ko}`,
     en: `${fileName} was uploaded. ${localizedReason.en}`,
+    mn: `${fileName} файл байршлаа. ${localizedReason.mn}`,
   };
 }
 
@@ -228,6 +230,7 @@ export async function POST(request: Request) {
           zh: "没有收到有效文件。",
           ko: "유효한 파일을 받지 못했습니다.",
           en: "No valid file was provided.",
+          mn: "Зөв файл хүлээн авсангүй.",
         }),
         source: "mock",
       } satisfies FileSummaryResponse,
@@ -249,11 +252,13 @@ export async function POST(request: Request) {
           zh: "当前 Alpha 已尝试 OCR，但没有从图片中识别到可总结的文字。请尽量上传清晰图片或文字型文件。",
           ko: "현재 Alpha가 OCR을 시도했지만 이미지에서 요약할 수 있는 텍스트를 인식하지 못했습니다. 선명한 이미지나 텍스트형 파일을 업로드해 주세요.",
           en: "This Alpha tried OCR but could not detect summarizable text in the image. Please upload a clearer image or a text-based file.",
+          mn: "Энэ Alpha OCR туршсан боловч зургаас хураангуйлах боломжтой текст олсонгүй. Илүү тод зураг эсвэл тексттэй файл оруулна уу.",
         }
       : {
           zh: "当前 Alpha 已尝试文字提取和 OCR，但仍未识别到可总结的文字。旧版 .doc/.ppt、受保护文件或画质较低的扫描件可能需要换成 PDF/DOCX/PPTX 或更清晰版本。",
           ko: "현재 Alpha가 텍스트 추출과 OCR을 모두 시도했지만 요약할 수 있는 텍스트를 찾지 못했습니다. 구형 .doc/.ppt, 보호된 파일, 화질이 낮은 스캔본은 PDF/DOCX/PPTX 또는 더 선명한 파일로 바꿔 주세요.",
           en: "This Alpha tried text extraction and OCR but still could not find summarizable text. Legacy .doc/.ppt files, protected files, or low-quality scans may need a PDF/DOCX/PPTX or clearer version.",
+          mn: "Энэ Alpha текст задлах болон OCR туршсан боловч хураангуйлах текст олсонгүй. Хуучин .doc/.ppt, хамгаалалттай файл эсвэл муу чанартай скан бол PDF/DOCX/PPTX эсвэл илүү тод хувилбар хэрэгтэй байж болно.",
         };
 
     return NextResponse.json({
@@ -272,7 +277,7 @@ export async function POST(request: Request) {
         fileName: file.name,
         targetLanguages: languageInstruction(languages),
         extractedText,
-        expectedJsonShape: { mode: "course | assignment", summary: { zh: "string", ko: "string", en: "string" } },
+        expectedJsonShape: { mode: "course | assignment", summary: { zh: "string", ko: "string", en: "string", mn: "string" } },
       },
     });
 
@@ -295,6 +300,7 @@ export async function POST(request: Request) {
       zh: "文件文字已提取，但 AI 总结暂时失败，请稍后重试。",
       ko: "파일 텍스트는 추출했지만 AI 요약에 실패했습니다. 잠시 후 다시 시도해 주세요.",
       en: "The file text was extracted, but AI summarization failed. Please try again later.",
+      mn: "Файлын текстийг гаргасан боловч AI хураангуй амжилтгүй боллоо. Дараа дахин оролдоно уу.",
     }),
     source: "mock",
   } satisfies FileSummaryResponse);

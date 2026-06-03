@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { Language, mockDiscussionSummary } from "@/lib/ai/mock";
+import { Language, mockDiscussionSummary, supportedLanguages } from "@/lib/ai/mock";
 import { callAiJson, languageInstruction } from "@/lib/ai/provider";
 
 type SummaryMessage = {
@@ -17,7 +17,7 @@ type SummarizeResponse = {
   source: "deepseek" | "mock";
 };
 
-const languages: Language[] = ["zh", "ko", "en"];
+const languages = supportedLanguages;
 const sectionKeys = [
   "confirmed_decisions",
   "tasks_and_owners",
@@ -50,18 +50,27 @@ const sectionLabels: Record<Language, Record<SectionKey, string>> = {
     unresolved_questions: "【4. Unresolved Questions】",
     next_actions: "【5. Next Actions】",
   },
+  mn: {
+    confirmed_decisions: "【1. Хэлэлцүүлгийн шийдвэр】",
+    tasks_and_owners: "【2. Даалгавар ба хариуцагч】",
+    professor_requirements: "【3. Профессор / даалгаврын шаардлага】",
+    unresolved_questions: "【4. Шийдээгүй асуултууд】",
+    next_actions: "【5. Дараагийн алхам】",
+  },
 };
 
 const missingLine: Record<Language, string> = {
   zh: "- 未确认",
   ko: "- 미확인",
   en: "- not confirmed",
+  mn: "- баталгаажаагүй",
 };
 
 const evidenceLabel: Record<Language, string> = {
   zh: "依据",
   ko: "근거",
   en: "evidence",
+  mn: "нотолгоо",
 };
 
 function stringifySummaryValue(value: unknown): string {
@@ -161,12 +170,12 @@ Quality rules:
 - Use only the provided transcript. Do not use outside assumptions, common classroom patterns, or examples from other projects.
 - Before writing any requirement, deadline, number, owner, or deliverable, verify that it appears clearly in the transcript.
 - Prefer concrete bullets over generic sentences.
-- Return Chinese, Korean, and English versions with the same meaning.
+- Return Chinese, Korean, English, and Mongolian versions with the same meaning.
 - Return only valid JSON.
 `;
 
 const discussionSummaryTask = `
-Create a structured discussion recap in Chinese, Korean, and English.
+Create a structured discussion recap in Chinese, Korean, English, and Mongolian.
 
 Use these sections:
 confirmed_decisions:
@@ -186,7 +195,7 @@ Give 3-5 concrete next actions. Start each action with a verb.
 
 Output constraints:
 - Do not include empty polite filler.
-- If the chat does not mention a detail, write "未确认" / "미확인" / "not confirmed" instead of guessing.
+- If the chat does not mention a detail, write "未确认" / "미확인" / "not confirmed" / "баталгаажаагүй" instead of guessing.
 
 JSON constraints:
 - Return summary as one object with these exact keys: confirmed_decisions, tasks_and_owners, professor_requirements, unresolved_questions, next_actions.
@@ -195,6 +204,7 @@ JSON constraints:
   - zh: Chinese bullet. It must be a direct restatement of the evidence, not a guess or broad interpretation.
   - ko: Korean bullet. It must have the same meaning as zh.
   - en: English bullet. It must have the same meaning as zh.
+  - mn: Mongolian bullet. It must have the same meaning as zh.
   - evidence: an exact short quote copied from the transcript that supports the bullet.
 - The evidence field must not be translated or paraphrased.
 - If the evidence only supports part of the sentence, remove the unsupported part from text.
@@ -223,11 +233,11 @@ export async function POST(request: Request) {
         transcript,
         expectedJsonShape: {
           summary: {
-            confirmed_decisions: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", evidence: "exact transcript quote" }],
-            tasks_and_owners: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", evidence: "exact transcript quote" }],
-            professor_requirements: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", evidence: "exact transcript quote" }],
-            unresolved_questions: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", evidence: "exact transcript quote" }],
-            next_actions: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", evidence: "exact transcript quote" }],
+            confirmed_decisions: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", mn: "Mongolian bullet", evidence: "exact transcript quote" }],
+            tasks_and_owners: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", mn: "Mongolian bullet", evidence: "exact transcript quote" }],
+            professor_requirements: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", mn: "Mongolian bullet", evidence: "exact transcript quote" }],
+            unresolved_questions: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", mn: "Mongolian bullet", evidence: "exact transcript quote" }],
+            next_actions: [{ zh: "Chinese bullet", ko: "Korean bullet", en: "English bullet", mn: "Mongolian bullet", evidence: "exact transcript quote" }],
           },
         },
       },

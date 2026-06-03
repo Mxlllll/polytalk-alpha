@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-type Language = "zh" | "ko" | "en";
+type Language = "zh" | "ko" | "en" | "mn";
 type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
 type MessageReactions = Partial<Record<ReactionKey, string[]>>;
 
