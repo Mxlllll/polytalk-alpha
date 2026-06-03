@@ -5,6 +5,8 @@ async function preparePdfRuntime() {
   pdfGlobal.DOMMatrix ??= canvas.DOMMatrix;
   pdfGlobal.ImageData ??= canvas.ImageData;
   pdfGlobal.Path2D ??= canvas.Path2D;
+
+  await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
 }
 
 export async function extractPdfTextFromBuffer(buffer: Buffer, includePageLabels = false) {
