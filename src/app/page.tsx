@@ -1585,6 +1585,8 @@ export default function Home() {
               const sender = members.find((member) => member.id === message.senderId);
               const isMine = message.senderId === activeViewer.id;
               const isAi = message.senderId === "ai";
+              const isSummaryMessage = message.kind === "file_summary" || message.kind === "discussion_summary";
+              const shouldShowSummaryOriginal = isSummaryMessage && message.originalLanguage !== activeViewer.language;
 
               return (
                 <article className={`message ${isMine ? "mine" : ""} ${isAi ? "ai" : ""}`} key={message.id}>
@@ -1599,8 +1601,24 @@ export default function Home() {
                         {message.fileName}
                       </div>
                     ) : null}
-                    <p className="main-text">{mainText(message)}</p>
-                    <p className="secondary-text">{secondaryText(message)}</p>
+                    {isSummaryMessage ? (
+                      <>
+                        <div className="message-summary-main">
+                          <StructuredSummary text={mainText(message)} />
+                        </div>
+                        {shouldShowSummaryOriginal ? (
+                          <div className="message-summary-secondary">
+                            <span>{languageLabels[message.originalLanguage]} {copy.original}</span>
+                            <StructuredSummary text={message.originalText} />
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <p className="main-text">{mainText(message)}</p>
+                        <p className="secondary-text">{secondaryText(message)}</p>
+                      </>
+                    )}
                     {message.fileName && message.attachmentId ? (
                       <div className="file-actions">
                         <button onClick={() => previewUploadedFile(message)} type="button">

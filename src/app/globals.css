@@ -524,6 +524,59 @@ input:hover {
   border-color: #d0dce6;
 }
 
+.message-summary-main .structured-summary {
+  max-height: none;
+  overflow: visible;
+}
+
+.message-summary-main .summary-block {
+  border-left-color: rgba(255, 255, 255, 0.3);
+}
+
+.message:not(.mine) .message-summary-main .summary-block {
+  border-left-color: rgba(19, 116, 102, 0.24);
+}
+
+.message.mine .message-summary-main .summary-block h4,
+.message.mine .message-summary-main .summary-block p {
+  color: white;
+}
+
+.message-summary-secondary {
+  margin-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  padding-top: 10px;
+  opacity: 0.72;
+}
+
+.message:not(.mine) .message-summary-secondary {
+  border-top-color: var(--line);
+}
+
+.message-summary-secondary > span {
+  display: block;
+  margin-bottom: 6px;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.message-summary-secondary .structured-summary {
+  max-height: 180px;
+}
+
+.message-summary-secondary .summary-block {
+  gap: 2px;
+  padding: 4px 0 4px 8px;
+}
+
+.message-summary-secondary .summary-block h4,
+.message-summary-secondary .summary-block p {
+  color: inherit;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
 .main-text {
   margin-bottom: 7px;
   font-size: 16px;
