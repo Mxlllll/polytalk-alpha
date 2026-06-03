@@ -131,7 +131,7 @@ input:focus-visible {
 }
 
 .home-panel {
-  max-width: 920px;
+  max-width: 680px;
   padding: 34px;
 }
 
@@ -333,8 +333,31 @@ input:hover {
 }
 
 .start-action {
-  min-height: 56px;
+  justify-content: flex-start;
+  min-height: 64px;
   font-size: 16px;
+}
+
+.start-action > span {
+  display: grid;
+  gap: 3px;
+  text-align: left;
+}
+
+.start-action small {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.home-secondary-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.history-trigger {
+  min-width: 118px;
 }
 
 .join-inline {
@@ -361,6 +384,41 @@ input:hover {
     linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(252, 250, 246, 0.92)),
     var(--surface);
   box-shadow: 0 18px 50px rgba(17, 17, 19, 0.06);
+}
+
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.history-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(17, 17, 19, 0.28);
+  backdrop-filter: blur(5px);
+}
+
+.history-modal {
+  position: relative;
+  z-index: 1;
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  overflow: hidden;
+  padding: 18px;
+  box-shadow: 0 30px 90px rgba(17, 17, 19, 0.22);
+}
+
+.history-modal .side-title-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .history-list {
@@ -424,6 +482,14 @@ input:hover {
   margin-bottom: 24px;
 }
 
+.lobby-subtitle,
+.option-description {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .lobby-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -433,12 +499,16 @@ input:hover {
 .option-card {
   position: relative;
   display: grid;
-  gap: 18px;
+  gap: 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 22px;
   background: linear-gradient(180deg, var(--surface), var(--surface-soft));
   box-shadow: var(--shadow-sm);
+}
+
+.option-card label {
+  align-self: end;
 }
 
 .option-card::after {

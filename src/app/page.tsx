@@ -294,6 +294,116 @@ const uiCopy: Record<
   },
 };
 
+const homeCopy: Record<
+  Language,
+  {
+    close: string;
+    displayName: string;
+    history: string;
+    historyEmpty: string;
+    historyMeta: (messages: number, files: number, aiResults: number) => string;
+    historySubtitle: string;
+    join: string;
+    login: string;
+    primaryLanguage: string;
+    start: string;
+    startSubtitle: string;
+  }
+> = {
+  zh: {
+    close: "关闭",
+    displayName: "显示名称",
+    history: "历史记录",
+    historyEmpty: "结束一次讨论后，这里会保存完整聊天、文件和 AI 结果。",
+    historyMeta: (messages, files, aiResults) => `${messages} 条消息 · ${files} 个文件 · ${aiResults} 个 AI 结果`,
+    historySubtitle: "查看之前保存的课堂讨论",
+    join: "加入",
+    login: "学校邮箱登录",
+    primaryLanguage: "我的主语言",
+    start: "开始讨论",
+    startSubtitle: "下一步选择创建口令或输入口令加入",
+  },
+  ko: {
+    close: "닫기",
+    displayName: "표시 이름",
+    history: "기록",
+    historyEmpty: "토론을 종료하면 전체 채팅, 파일, AI 결과가 여기에 저장됩니다.",
+    historyMeta: (messages, files, aiResults) => `메시지 ${messages}개 · 파일 ${files}개 · AI 결과 ${aiResults}개`,
+    historySubtitle: "저장한 수업 토론 보기",
+    join: "참여",
+    login: "학교 이메일 로그인",
+    primaryLanguage: "내 기본 언어",
+    start: "토론 시작",
+    startSubtitle: "다음 단계에서 코드를 만들거나 입력합니다",
+  },
+  en: {
+    close: "Close",
+    displayName: "Display name",
+    history: "History",
+    historyEmpty: "After a discussion ends, full chat, files, and AI results will be saved here.",
+    historyMeta: (messages, files, aiResults) => `${messages} messages · ${files} files · ${aiResults} AI results`,
+    historySubtitle: "Review saved class discussions",
+    join: "Join",
+    login: "School email login",
+    primaryLanguage: "My primary language",
+    start: "Start discussion",
+    startSubtitle: "Next, create a code or enter one to join",
+  },
+};
+
+const roomChoiceCopy: Record<
+  Language,
+  {
+    back: string;
+    create: string;
+    createDescription: string;
+    createTitle: string;
+    join: string;
+    joinDescription: string;
+    joinPlaceholder: string;
+    joinTitle: string;
+    subtitle: string;
+    title: string;
+  }
+> = {
+  zh: {
+    back: "返回首页",
+    create: "创建口令",
+    createDescription: "生成一个 4 位面对面口令，让同学输入同一个口令加入。",
+    createTitle: "我来创建讨论",
+    join: "加入讨论",
+    joinDescription: "输入同学给你的 4 位口令，进入同一个讨论房间。",
+    joinPlaceholder: "输入 4 位口令",
+    joinTitle: "我有口令",
+    subtitle: "选择创建一个新讨论，或输入口令加入已有讨论。",
+    title: "进入讨论",
+  },
+  ko: {
+    back: "홈으로",
+    create: "코드 만들기",
+    createDescription: "4자리 대면 코드를 만들어 친구들이 같은 방에 들어오게 합니다.",
+    createTitle: "새 토론 만들기",
+    join: "토론 참여",
+    joinDescription: "친구가 준 4자리 코드를 입력해 같은 토론방에 참여합니다.",
+    joinPlaceholder: "4자리 코드 입력",
+    joinTitle: "코드가 있어요",
+    subtitle: "새 토론을 만들거나 기존 코드로 참여하세요.",
+    title: "토론 입장",
+  },
+  en: {
+    back: "Back home",
+    create: "Create code",
+    createDescription: "Generate a 4-digit face-to-face code so classmates can join the same room.",
+    createTitle: "Create a discussion",
+    join: "Join discussion",
+    joinDescription: "Enter the 4-digit code from your classmate to join the same room.",
+    joinPlaceholder: "Enter 4-digit code",
+    joinTitle: "I have a code",
+    subtitle: "Create a new discussion or join an existing one with a code.",
+    title: "Enter discussion",
+  },
+};
+
 const sampleMembers: Member[] = [
   { id: "current-user", name: "Mina", email: "mina@yonsei.ac.kr", language: "zh" },
   { id: "chen", name: "Chen", email: "chen@yonsei.ac.kr", language: "zh" },
@@ -514,6 +624,7 @@ export default function Home() {
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>(() => loadLocalHistory(getOrCreateDemoUserId()));
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isHistoryView, setIsHistoryView] = useState(false);
 
   const members = useMemo<Member[]>(
@@ -534,6 +645,7 @@ export default function Home() {
     (sessionUserId ? members.find((member) => member.id === sessionUserId) : undefined) ??
     members[0];
   const copy = uiCopy[stage === "room" ? activeViewer.language : language];
+  const homeText = homeCopy[language];
   const historyOwnerId = sessionUserId ?? demoUserId;
 
   const currentMember = useMemo<Member>(
@@ -1605,96 +1717,101 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="home-grid">
-            <section className="home-start">
-              <div className="form-grid">
-                <label>
-                  <span>显示名称</span>
-                  <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-                </label>
+          <section className="home-start">
+            <div className="form-grid">
+              <label>
+                <span>{homeText.displayName}</span>
+                <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+              </label>
 
-                <div>
-                  <span className="field-label">我的主语言</span>
-                  <div className="segmented">
-                    {(["zh", "ko", "en"] as Language[]).map((item) => (
-                      <button
-                        className={language === item ? "active" : ""}
-                        key={item}
-                        onClick={() => setLanguage(item)}
-                        type="button"
-                      >
-                        {languageLabels[item]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <button className="primary-action start-action" onClick={createRoom} type="button">
-                  <Plus size={19} />
-                  开始讨论
-                </button>
-
-                <div className="join-inline">
-                  <input
-                    inputMode="numeric"
-                    maxLength={4}
-                    placeholder="输入 4 位口令"
-                    value={roomCode}
-                    onChange={(event) => setRoomCode(event.target.value.replace(/\D/g, "").slice(0, 4))}
-                  />
-                  <button className="secondary-action" onClick={joinRoom} type="button">
-                    加入
-                  </button>
-                </div>
-
-                <button className="text-button" onClick={() => setStage("auth")} type="button">
-                  学校邮箱登录
-                </button>
-              </div>
-
-              {roomStatus ? <p className="status-text">{roomStatus}</p> : null}
-            </section>
-
-            <section className="history-panel">
-              <div className="side-title-row">
-                <p className="label">历史记录</p>
-                <History size={16} />
-              </div>
-
-              {historyRecords.length ? (
-                <div className="history-list">
-                  {historyRecords.map((record) => (
-                    <button className="history-card" key={record.id} onClick={() => openHistory(record)} type="button">
-                      <strong>{record.title}</strong>
-                      <span>{record.endedAt}</span>
-                      <small>
-                        {record.messages.length} 条消息 · {record.files.length} 个文件 · {record.aiResults.length} 个 AI 结果
-                      </small>
+              <div>
+                <span className="field-label">{homeText.primaryLanguage}</span>
+                <div className="segmented">
+                  {(["zh", "ko", "en"] as Language[]).map((item) => (
+                    <button
+                      className={language === item ? "active" : ""}
+                      key={item}
+                      onClick={() => setLanguage(item)}
+                      type="button"
+                    >
+                      {languageLabels[item]}
                     </button>
                   ))}
                 </div>
-              ) : (
-                <p className="empty-history">结束一次讨论后，这里会保存完整聊天、文件和 AI 结果。</p>
-              )}
-            </section>
-          </div>
+              </div>
+
+              <button className="primary-action start-action" onClick={() => setStage("lobby")} type="button">
+                <Plus size={19} />
+                <span>
+                  {homeText.start}
+                  <small>{homeText.startSubtitle}</small>
+                </span>
+              </button>
+
+              <div className="home-secondary-actions">
+                <button className="text-button" onClick={() => setStage("auth")} type="button">
+                  {homeText.login}
+                </button>
+                <button className="text-button history-trigger" onClick={() => setIsHistoryOpen(true)} type="button">
+                  <History size={16} />
+                  {homeText.history}
+                </button>
+              </div>
+            </div>
+
+            {roomStatus ? <p className="status-text">{roomStatus}</p> : null}
+          </section>
+
+          {isHistoryOpen ? (
+            <div className="history-overlay" role="dialog" aria-modal="true" aria-label={homeText.history}>
+              <button className="history-backdrop" onClick={() => setIsHistoryOpen(false)} type="button" />
+              <section className="history-panel history-modal">
+                <div className="side-title-row">
+                  <div>
+                    <p className="label">{homeText.history}</p>
+                    <small>{homeText.historySubtitle}</small>
+                  </div>
+                  <button className="mini-action" onClick={() => setIsHistoryOpen(false)} type="button">
+                    {homeText.close}
+                  </button>
+                </div>
+
+                {historyRecords.length ? (
+                  <div className="history-list">
+                    {historyRecords.map((record) => (
+                      <button className="history-card" key={record.id} onClick={() => openHistory(record)} type="button">
+                        <strong>{record.title}</strong>
+                        <span>{record.endedAt}</span>
+                        <small>{homeText.historyMeta(record.messages.length, record.files.length, record.aiResults.length)}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="empty-history">{homeText.historyEmpty}</p>
+                )}
+              </section>
+            </div>
+          ) : null}
         </section>
       </main>
     );
   }
 
   if (stage === "lobby") {
+    const roomChoice = roomChoiceCopy[language];
+
     return (
       <main className="center-shell">
         <section className="panel lobby-panel">
           <header className="split-head">
             <div>
-              <p className="eyebrow">{copy.verifiedEmail}</p>
-              <h1>{copy.lobbyTitle}</h1>
+              <p className="eyebrow">AI Study Room</p>
+              <h1>{roomChoice.title}</h1>
+              <p className="lobby-subtitle">{roomChoice.subtitle}</p>
             </div>
-            <button className="text-button" onClick={() => setStage("auth")} type="button">
+            <button className="text-button" onClick={() => setStage("home")} type="button">
               <LogOut size={18} />
-              {copy.switchIdentity}
+              {roomChoice.back}
             </button>
           </header>
 
@@ -1704,28 +1821,36 @@ export default function Home() {
             <article className="option-card">
               <div className="card-title">
                 <Plus size={20} />
-                <h2>{copy.newRoom}</h2>
+                <h2>{roomChoice.createTitle}</h2>
               </div>
+              <p className="option-description">{roomChoice.createDescription}</p>
               <label>
                 <span>{copy.roomName}</span>
                 <input value={roomTitle} onChange={(event) => setRoomTitle(event.target.value)} />
               </label>
               <button className="primary-action" onClick={createRoom} type="button">
-                {copy.createRoom}
+                {roomChoice.create}
               </button>
             </article>
 
             <article className="option-card">
               <div className="card-title">
                 <Users size={20} />
-                <h2>{copy.joinRoom}</h2>
+                <h2>{roomChoice.joinTitle}</h2>
               </div>
+              <p className="option-description">{roomChoice.joinDescription}</p>
               <label>
                 <span>{copy.faceCode}</span>
-                <input value={roomCode} onChange={(event) => setRoomCode(event.target.value)} />
+                <input
+                  inputMode="numeric"
+                  maxLength={4}
+                  placeholder={roomChoice.joinPlaceholder}
+                  value={roomCode}
+                  onChange={(event) => setRoomCode(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                />
               </label>
               <button className="secondary-action" onClick={joinRoom} type="button">
-                {copy.join}
+                {roomChoice.join}
               </button>
             </article>
           </div>
