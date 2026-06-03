@@ -15,7 +15,6 @@ type FileSummaryMode = "course" | "assignment";
 
 const languages: Language[] = ["zh", "ko", "en"];
 const ocrLanguages = process.env.OCR_LANGUAGES || "eng+kor+chi_sim";
-const ocrMaxPdfPages = Number(process.env.OCR_MAX_PDF_PAGES || 3);
 
 function normalizeSummaryMode(value: unknown): FileSummaryMode {
   return value === "course" ? "course" : "assignment";
@@ -170,30 +169,32 @@ async function ocrImage(buffer: Buffer) {
 }
 
 async function extractPdfText(buffer: Buffer) {
-  const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: buffer });
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(buffer),
+    disableFontFace: true,
+    isEvalSupported: false,
+    useWorkerFetch: false,
+  });
+  const document = await loadingTask.promise;
+
   try {
-    const result = await parser.getText();
-    const text = normalizeExtractedText(result.text);
-    if (text) return text;
+    const pages: string[] = [];
 
-    const screenshots = await parser.getScreenshot({
-      first: ocrMaxPdfPages,
-      imageBuffer: true,
-      imageDataUrl: false,
-      scale: 2,
-    });
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ");
 
-    const pageTexts = [];
-    for (const page of screenshots.pages) {
-      if (page.data) {
-        pageTexts.push(await ocrImage(Buffer.from(page.data)));
-      }
+      pages.push(`[Page ${pageNumber}]\n${pageText}`);
+      page.cleanup();
     }
 
-    return normalizeExtractedText(pageTexts.map((text, index) => `[OCR page ${index + 1}]\n${text}`).join("\n\n"));
+    return normalizeExtractedText(pages.join("\n\n"));
   } finally {
-    await parser.destroy();
+    await document.destroy();
   }
 }
 

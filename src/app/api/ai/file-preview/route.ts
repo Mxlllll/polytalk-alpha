@@ -33,13 +33,32 @@ async function extractPptxText(buffer: Buffer) {
 }
 
 async function extractPdfText(buffer: Buffer) {
-  const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: buffer });
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(buffer),
+    disableFontFace: true,
+    isEvalSupported: false,
+    useWorkerFetch: false,
+  });
+  const document = await loadingTask.promise;
+
   try {
-    const result = await parser.getText();
-    return normalizeWhitespace(result.text);
+    const pages: string[] = [];
+
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ");
+
+      pages.push(pageText);
+      page.cleanup();
+    }
+
+    return normalizeWhitespace(pages.join("\n"));
   } finally {
-    await parser.destroy();
+    await document.destroy();
   }
 }
 
