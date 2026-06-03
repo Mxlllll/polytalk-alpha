@@ -1,8 +1,4 @@
 import { NextResponse } from "next/server";
-import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
-import JSZip from "jszip";
-import Tesseract from "tesseract.js";
 import { Language } from "@/lib/ai/mock";
 import { callAiJson, languageInstruction } from "@/lib/ai/provider";
 
@@ -151,6 +147,7 @@ function decodeXmlText(value: string) {
 }
 
 async function extractPptxText(buffer: Buffer) {
+  const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(buffer);
   const slideFiles = Object.keys(zip.files)
     .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
@@ -167,11 +164,13 @@ async function extractPptxText(buffer: Buffer) {
 }
 
 async function ocrImage(buffer: Buffer) {
+  const { default: Tesseract } = await import("tesseract.js");
   const result = await Tesseract.recognize(buffer, ocrLanguages);
   return normalizeExtractedText(result.data.text);
 }
 
 async function extractPdfText(buffer: Buffer) {
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: buffer });
   try {
     const result = await parser.getText();
@@ -221,6 +220,7 @@ async function extractText(file: File) {
     type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     lowerName.endsWith(".docx")
   ) {
+    const mammoth = await import("mammoth");
     const result = await mammoth.extractRawText({ buffer });
     return normalizeExtractedText(result.value);
   }

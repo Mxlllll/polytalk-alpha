@@ -1,7 +1,4 @@
 import { NextResponse } from "next/server";
-import JSZip from "jszip";
-import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
 
 export const runtime = "nodejs";
 
@@ -19,6 +16,7 @@ function decodeXmlText(value: string) {
 }
 
 async function extractPptxText(buffer: Buffer) {
+  const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(buffer);
   const slideFiles = Object.keys(zip.files)
     .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
@@ -35,6 +33,7 @@ async function extractPptxText(buffer: Buffer) {
 }
 
 async function extractPdfText(buffer: Buffer) {
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: buffer });
   try {
     const result = await parser.getText();
@@ -59,6 +58,7 @@ async function extractText(file: File) {
   }
 
   if (type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || lowerName.endsWith(".docx")) {
+    const mammoth = await import("mammoth");
     const result = await mammoth.extractRawText({ buffer });
     return normalizeWhitespace(result.value);
   }
