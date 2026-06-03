@@ -16,14 +16,6 @@ function decodeXmlText(value: string) {
     .replace(/&apos;/g, "'");
 }
 
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error) {
-    return `${error.name}: ${error.message}`;
-  }
-
-  return String(error);
-}
-
 async function extractPptxText(buffer: Buffer) {
   const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(buffer);
@@ -95,7 +87,6 @@ export async function POST(request: Request) {
         previewText: "",
         extractedTextLength: 0,
         error: "File preview failed.",
-        debug: getErrorMessage(error),
       },
       { status: 500 },
     );
