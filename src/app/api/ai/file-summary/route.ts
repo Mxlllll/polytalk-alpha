@@ -14,9 +14,33 @@ type FileSummaryResponse = {
   source: "deepseek" | "mock";
 };
 
+type FileSummaryMode = "course" | "assignment";
+
 const languages: Language[] = ["zh", "ko", "en"];
 const ocrLanguages = process.env.OCR_LANGUAGES || "eng+kor+chi_sim";
 const ocrMaxPdfPages = Number(process.env.OCR_MAX_PDF_PAGES || 3);
+
+function parseSummaryMode(value: FormDataEntryValue | null): FileSummaryMode {
+  return value === "course" ? "course" : "assignment";
+}
+
+function summaryPromptForMode(mode: FileSummaryMode) {
+  if (mode === "course") {
+    return {
+      instructions:
+        "You are an academic learning assistant for international students in Korean universities. Summarize lecture slides, class notes, textbook excerpts, or screenshots so a student can understand the class in 30 seconds. Do not write long paragraphs. Avoid fluff. Explain for beginners. Return only valid JSON.",
+      task:
+        "Create a structured class summary in Chinese, Korean, and English. For each language, strictly use this structure: 【1. 课程主题（一句话）】one sentence explaining what the class is about; 【2. 核心问题】what problem the class tries to solve; 【3. 关键概念（最多5个）】up to five concepts explained simply; 【4. 讲解逻辑（重点）】numbered 1-2-3-4 steps showing how the teacher explains it; 【5. 最终结论】the most important takeaway; 【6. 一个例子（必须有）】one simple example that helps a beginner understand. Keep every item short.",
+    };
+  }
+
+  return {
+    instructions:
+      "You are an academic assignment analyst for international students in Korean universities. Do not produce a generic file summary. Extract the parts that help a study group act: assignment objective, deliverables, deadline, format rules, grading criteria, required sources, constraints, risks, and questions to ask the professor. If a field is not present, say it is not found instead of inventing. Return only valid JSON.",
+    task:
+      "Analyze this uploaded academic file in Chinese, Korean, and English. Each language should use compact sections: 1) what this file asks the group to do, 2) concrete requirements and grading criteria, 3) deadline/format/submission details if present, 4) suggested task split, 5) unclear points to confirm with the professor or teammates, 6) next actions.",
+  };
+}
 
 function fallbackSummary(fileName: string, reason: Record<Language, string> | string): Record<Language, string> {
   const localizedReason =
@@ -140,6 +164,8 @@ async function extractText(file: File) {
 export async function POST(request: Request) {
   const formData = await request.formData();
   const file = formData.get("file");
+  const mode = parseSummaryMode(formData.get("mode"));
+  const prompt = summaryPromptForMode(mode);
 
   if (!(file instanceof File)) {
     return NextResponse.json(
@@ -186,11 +212,10 @@ export async function POST(request: Request) {
 
   try {
     const result = await callAiJson<{ summary: Record<Language, string> }>({
-      instructions:
-        "You are an academic assignment analyst for international students in Korean universities. Do not produce a generic file summary. Extract the parts that help a study group act: assignment objective, deliverables, deadline, format rules, grading criteria, required sources, constraints, risks, and questions to ask the professor. If a field is not present, say it is not found instead of inventing. Return only valid JSON.",
+      instructions: prompt.instructions,
       input: {
-        task:
-          "Analyze this uploaded academic file in Chinese, Korean, and English. Each language should use compact sections: 1) what this file asks the group to do, 2) concrete requirements and grading criteria, 3) deadline/format/submission details if present, 4) suggested task split, 5) unclear points to confirm with the professor or teammates, 6) next actions.",
+        task: prompt.task,
+        mode,
         fileName: file.name,
         targetLanguages: languageInstruction(languages),
         extractedText,

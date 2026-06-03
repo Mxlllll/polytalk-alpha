@@ -17,6 +17,7 @@ import { buildMockTranslations } from "@/lib/ai/mock";
 
 type Language = "zh" | "ko" | "en";
 type Stage = "auth" | "lobby" | "room";
+type FileSummaryMode = "course" | "assignment";
 
 type Member = {
   id: string;
@@ -111,6 +112,33 @@ const languageLabels: Record<Language, string> = {
   zh: "中文",
   ko: "한국어",
   en: "English",
+};
+
+const fileSummaryModeTitles: Record<FileSummaryMode, Record<Language, string>> = {
+  course: {
+    zh: "课堂总结",
+    ko: "수업 요약",
+    en: "Class Summary",
+  },
+  assignment: {
+    zh: "作业要求",
+    ko: "과제 요구사항",
+    en: "Assignment Brief",
+  },
+};
+
+const fileActionLabels: Record<"preview" | FileSummaryMode, Record<Language, string>> = {
+  preview: {
+    zh: "预览",
+    ko: "미리보기",
+    en: "Preview",
+  },
+  course: fileSummaryModeTitles.course,
+  assignment: {
+    zh: "提取作业要求",
+    ko: "과제 요구 추출",
+    en: "Extract Assignment",
+  },
 };
 
 const uiCopy: Record<
@@ -1131,9 +1159,10 @@ export default function Home() {
     }
   }
 
-  async function summarizeFile(file: File): Promise<FileSummaryApiResponse> {
+  async function summarizeFile(file: File, mode: FileSummaryMode): Promise<FileSummaryApiResponse> {
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("mode", mode);
 
     const response = await fetch("/api/ai/file-summary", {
       method: "POST",
@@ -1167,7 +1196,7 @@ export default function Home() {
     };
   }
 
-  async function summarizeUploadedFile(message: Message) {
+  async function summarizeUploadedFile(message: Message, mode: FileSummaryMode) {
     if (!message.attachmentId) {
       setRoomStatus("这个文件缺少可总结的引用，请重新上传后再试。");
       return;
@@ -1179,15 +1208,16 @@ export default function Home() {
       return;
     }
 
-    setRoomStatus("正在为你生成个人文件总结...");
+    const modeTitle = fileSummaryModeTitles[mode][activeViewer.language];
+    setRoomStatus(`正在为你生成个人${modeTitle}...`);
 
     try {
-      const fileSummary = await summarizeFile(file);
+      const fileSummary = await summarizeFile(file, mode);
       setPrivateAiResults((current) => [
         {
           id: crypto.randomUUID(),
           kind: "file_summary",
-          title: "文件总结",
+          title: modeTitle,
           fileName: message.fileName ?? file.name,
           summary: fileSummary.summary,
           source: fileSummary.source,
@@ -1198,12 +1228,12 @@ export default function Home() {
 
       setRoomStatus(
         fileSummary.source === "deepseek"
-          ? `文件总结已生成，只在你的 AI 结果里可见。提取了 ${fileSummary.extractedTextLength} 个字符。`
-          : "文件总结已生成（mock fallback），只在你的 AI 结果里可见。",
+          ? `${modeTitle}已生成，只在你的 AI 结果里可见。提取了 ${fileSummary.extractedTextLength} 个字符。`
+          : `${modeTitle}已生成（mock fallback），只在你的 AI 结果里可见。`,
       );
     } catch (error) {
       console.error(error);
-      setRoomStatus("文件总结失败，请稍后再试。");
+      setRoomStatus(`${modeTitle}生成失败，请稍后再试。`);
     }
   }
 
@@ -1213,7 +1243,7 @@ export default function Home() {
     if (!message.attachmentId || !localFiles[message.attachmentId]) {
       setFilePreview({
         fileName,
-        text: "文件卡片已留在房间中。当前展示版的全文预览仅支持本机刚上传的文本类文件；PDF/Word/PPT/图片可以点击“总结给我看”让 AI 读取。",
+        text: "文件卡片已留在房间中。当前展示版的全文预览仅支持本机刚上传的文本类文件；PDF/Word/PPT/图片可以选择“课堂总结”或“提取作业要求”让 AI 读取。",
       });
       return;
     }
@@ -1233,7 +1263,7 @@ export default function Home() {
 
     setFilePreview({
       fileName: file.name,
-      text: "这个文件已经保留在房间里。PDF/Word/PPT/图片的全文预览会在后续版本做成独立阅读器；现在可以先点击“总结给我看”，让 AI 提取作业要求、评分标准和行动项。",
+      text: "这个文件已经保留在房间里。PDF/Word/PPT/图片的全文预览会在后续版本做成独立阅读器；现在可以先按需要选择“课堂总结”或“提取作业要求”。",
     });
   }
 
@@ -1290,7 +1320,7 @@ export default function Home() {
         setRoomMembers(demoData.room.members);
         setMessages(demoData.room.messages);
         setFiles(demoData.room.files);
-        setRoomStatus("文件卡片已发送到房间。需要总结时，请在文件卡片上点击“总结给我看”。");
+        setRoomStatus("文件卡片已发送到房间。需要时可以选择“课堂总结”或“提取作业要求”。");
       } catch (error) {
         console.error(error);
         setRoomStatus("公开测试房间文件消息保存失败，请稍后再试。");
@@ -1304,7 +1334,7 @@ export default function Home() {
       setFiles((current) => [...current, file.name]);
       setMessages((current) => [...current, fileMessage]);
       setIsUploadingFile(false);
-      setRoomStatus("文件卡片已发送。需要总结时，请在文件卡片上点击“总结给我看”。");
+      setRoomStatus("文件卡片已发送。需要时可以选择“课堂总结”或“提取作业要求”。");
       return;
     }
 
@@ -1360,7 +1390,7 @@ export default function Home() {
     setFiles((current) => [...current, file.name]);
     await loadMessages(currentRoomId);
     setIsUploadingFile(false);
-    setRoomStatus("文件卡片已上传到房间。需要总结时，请在文件卡片上点击“总结给我看”。");
+    setRoomStatus("文件卡片已上传到房间。需要时可以选择“课堂总结”或“提取作业要求”。");
   }
 
   if (stage === "auth") {
@@ -1531,11 +1561,15 @@ export default function Home() {
                       <div className="file-actions">
                         <button onClick={() => previewUploadedFile(message)} type="button">
                           <Eye size={15} />
-                          预览
+                          {fileActionLabels.preview[activeViewer.language]}
                         </button>
-                        <button onClick={() => summarizeUploadedFile(message)} type="button">
+                        <button onClick={() => summarizeUploadedFile(message, "course")} type="button">
                           <Sparkles size={15} />
-                          总结给我看
+                          {fileActionLabels.course[activeViewer.language]}
+                        </button>
+                        <button onClick={() => summarizeUploadedFile(message, "assignment")} type="button">
+                          <FileText size={15} />
+                          {fileActionLabels.assignment[activeViewer.language]}
                         </button>
                       </div>
                     ) : null}
