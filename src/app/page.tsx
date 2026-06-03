@@ -95,6 +95,7 @@ type PrivateAiResult = {
 
 type FilePreview = {
   fileName: string;
+  imageUrl?: string;
   text: string;
 };
 
@@ -1490,28 +1491,54 @@ export default function Home() {
     if (!message.attachmentId || !localFiles[message.attachmentId]) {
       setFilePreview({
         fileName,
-        text: "文件卡片已留在房间中。当前展示版的全文预览仅支持本机刚上传的文本类文件；PDF/Word/PPT/图片可以点击“AI 总结”，让 AI 自动判断内容类型并整理。",
+        text: "文件卡片已留在房间中。当前 Alpha 可以预览本机刚上传的文件；跨设备重新打开后的远端文件预览会在下一步接入 Supabase 下载。",
       });
       return;
     }
 
     const file = localFiles[message.attachmentId];
-    if (
-      file.type.startsWith("text/") ||
-      /\.(txt|md|csv)$/i.test(file.name)
-    ) {
-      const text = await file.text();
+
+    if (file.type.startsWith("image/")) {
+      const imageUrl = URL.createObjectURL(file);
       setFilePreview({
         fileName: file.name,
-        text: text.slice(0, 2400) || "这个文件暂时没有可预览的文本内容。",
+        imageUrl,
+        text: "图片预览",
       });
       return;
     }
 
-    setFilePreview({
-      fileName: file.name,
-      text: "这个文件已经保留在房间里。PDF/Word/PPT/图片的全文预览会在后续版本做成独立阅读器；现在可以先点击“AI 总结”，让 AI 自动判断是课堂内容还是作业要求。",
-    });
+    setRoomStatus("正在提取文件预览...");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/ai/file-preview", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error("File preview request failed");
+
+      const data = (await response.json()) as {
+        extractedTextLength: number;
+        fileName: string;
+        previewText: string;
+      };
+
+      setFilePreview({
+        fileName: data.fileName,
+        text: data.previewText || "这个文件暂时没有可预览的文字内容。可以尝试点击 AI 总结，让系统进行更深度的识别。",
+      });
+      setRoomStatus(data.extractedTextLength ? "文件预览已生成。" : "没有提取到可预览文字。");
+    } catch (error) {
+      console.error(error);
+      setFilePreview({
+        fileName: file.name,
+        text: "文件预览失败。请确认文件不是加密或损坏文件，也可以直接尝试 AI 总结。",
+      });
+      setRoomStatus("文件预览失败，请稍后再试。");
+    }
   }
 
   async function handleFile(fileList: FileList | null) {
@@ -1903,7 +1930,8 @@ export default function Home() {
               const sender = members.find((member) => member.id === message.senderId);
               const isMine = message.senderId === activeViewer.id;
               const isAi = message.senderId === "ai";
-              const isSummaryMessage = message.kind === "file_summary" || message.kind === "discussion_summary";
+              const isFileCard = Boolean(message.fileName && message.attachmentId);
+              const isSummaryMessage = !isFileCard && (message.kind === "file_summary" || message.kind === "discussion_summary");
               const shouldShowSummaryOriginal = isSummaryMessage && message.originalLanguage !== activeViewer.language;
 
               return (
@@ -2011,6 +2039,11 @@ export default function Home() {
               </div>
               <article className="private-ai-card">
                 <strong>{filePreview.fileName}</strong>
+                {filePreview.imageUrl ? (
+                  // Blob URLs from user-selected local files cannot be optimized by next/image.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img className="file-preview-image" src={filePreview.imageUrl} alt={filePreview.fileName} />
+                ) : null}
                 <p>{filePreview.text}</p>
               </article>
             </section>
