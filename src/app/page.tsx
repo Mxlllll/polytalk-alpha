@@ -5,6 +5,7 @@ import {
   ArrowUp,
   Eye,
   FileText,
+  History,
   Loader2,
   LogOut,
   Plus,
@@ -16,7 +17,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { buildMockTranslations } from "@/lib/ai/mock";
 
 type Language = "zh" | "ko" | "en";
-type Stage = "auth" | "lobby" | "room";
+type Stage = "home" | "auth" | "lobby" | "room";
 type FileSummaryMode = "course" | "assignment";
 
 type Member = {
@@ -95,6 +96,17 @@ type PrivateAiResult = {
 type FilePreview = {
   fileName: string;
   text: string;
+};
+
+type HistoryRecord = {
+  id: string;
+  title: string;
+  joinCode: string;
+  endedAt: string;
+  members: Member[];
+  messages: Message[];
+  files: string[];
+  aiResults: PrivateAiResult[];
 };
 
 type DemoRoomApiResponse = {
@@ -403,13 +415,32 @@ function StructuredSummary({ text }: { text: string }) {
 }
 
 function joinCode() {
-  return `${Math.floor(100 + Math.random() * 900)} ${Math.floor(100 + Math.random() * 900)}`;
+  return String(Math.floor(1000 + Math.random() * 9000));
 }
 
 function normalizeJoinCode(input: string) {
   const digits = input.replace(/\D/g, "");
-  if (digits.length === 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
+  if (digits.length >= 4) return digits.slice(0, 4);
   return input.trim().replace(/\s+/g, " ");
+}
+
+function historyStorageKey(userId: string) {
+  return `polytalk-history-${userId}`;
+}
+
+function loadLocalHistory(userId: string): HistoryRecord[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    return JSON.parse(window.localStorage.getItem(historyStorageKey(userId)) ?? "[]") as HistoryRecord[];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalHistory(userId: string, records: HistoryRecord[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(historyStorageKey(userId), JSON.stringify(records.slice(0, 20)));
 }
 
 function isTemporaryPublicHost() {
@@ -456,7 +487,7 @@ function getOrCreateDemoUserId() {
 
 export default function Home() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  const [stage, setStage] = useState<Stage>("auth");
+  const [stage, setStage] = useState<Stage>("home");
   const [email, setEmail] = useState("mina@yonsei.ac.kr");
   const [password, setPassword] = useState("polytalk123");
   const [displayName, setDisplayName] = useState("Mina");
@@ -465,8 +496,8 @@ export default function Home() {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
-  const [roomTitle, setRoomTitle] = useState("Media Culture 小组作业");
-  const [roomCode, setRoomCode] = useState("482 913");
+  const [roomTitle, setRoomTitle] = useState("");
+  const [roomCode, setRoomCode] = useState("");
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
   const [isDbRoom, setIsDbRoom] = useState(false);
   const [isPublicDemoRoom, setIsPublicDemoRoom] = useState(false);
@@ -476,12 +507,14 @@ export default function Home() {
   const [activeViewerId, setActiveViewerId] = useState(getOrCreateDemoUserId);
   const [messageText, setMessageText] = useState("");
   const [messages, setMessages] = useState(initialMessages);
-  const [, setFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<string[]>([]);
   const [localFiles, setLocalFiles] = useState<Record<string, File>>({});
   const [privateAiResults, setPrivateAiResults] = useState<PrivateAiResult[]>([]);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>(() => loadLocalHistory(getOrCreateDemoUserId()));
+  const [isHistoryView, setIsHistoryView] = useState(false);
 
   const members = useMemo<Member[]>(
     () => {
@@ -501,6 +534,7 @@ export default function Home() {
     (sessionUserId ? members.find((member) => member.id === sessionUserId) : undefined) ??
     members[0];
   const copy = uiCopy[stage === "room" ? activeViewer.language : language];
+  const historyOwnerId = sessionUserId ?? demoUserId;
 
   const currentMember = useMemo<Member>(
     () => ({
@@ -700,8 +734,7 @@ export default function Home() {
           setActiveViewerId(data.session?.user.id ?? "current-user");
           setEmail(sessionEmail);
           await withTimeout(ensureProfile(data.session?.user.id ?? "", sessionEmail), 5000, "Profile sync");
-          setAuthStatus("邮箱登录成功，已进入 Alpha 工作台。");
-          setStage("lobby");
+          setAuthStatus("邮箱登录成功，可以直接开始讨论。");
         }
       } catch (error) {
         console.error(error);
@@ -738,7 +771,7 @@ export default function Home() {
         setActiveViewerId(data.session.user.id);
         await withTimeout(ensureProfile(data.session.user.id, data.session.user.email ?? email), 6000, "Profile sync");
         setAuthStatus("注册成功，已进入 Alpha 工作台。");
-        setStage("lobby");
+        setStage("home");
         return;
       }
 
@@ -775,7 +808,7 @@ export default function Home() {
         setActiveViewerId(data.session.user.id);
         await withTimeout(ensureProfile(data.session.user.id, data.session.user.email ?? email), 6000, "Profile sync");
         setAuthStatus("登录成功，已进入 Alpha 工作台。");
-        setStage("lobby");
+        setStage("home");
       }
     } catch (error) {
       console.error(error);
@@ -787,9 +820,15 @@ export default function Home() {
 
   async function createRoom() {
     const code = joinCode();
+    const generatedTitle = `课堂讨论 ${new Date().toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })}`;
+    const nextRoomTitle = roomTitle.trim() || generatedTitle;
+    setRoomTitle(nextRoomTitle);
     setStage("room");
+    setIsHistoryView(false);
     setMessages([]);
     setFiles([]);
+    setPrivateAiResults([]);
+    setFilePreview(null);
     setRoomMembers([currentMember]);
     setActiveViewerId(currentMember.id);
 
@@ -804,7 +843,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "create",
-            title: roomTitle,
+            title: nextRoomTitle,
             joinCode: code,
             member: currentMember,
           }),
@@ -844,7 +883,7 @@ export default function Home() {
 
     const { error: roomError } = await supabase.from("rooms").insert({
       id: roomId,
-      title: roomTitle,
+      title: nextRoomTitle,
       join_code: code,
       created_by: sessionUserId,
     });
@@ -874,8 +913,8 @@ export default function Home() {
     const code = normalizeJoinCode(roomCode);
     setRoomCode(code);
 
-    if (!code || code.replace(/\D/g, "").length !== 6) {
-      setRoomStatus("请输入 6 位面对面口令，例如 565 339。");
+    if (!code || code.replace(/\D/g, "").length !== 4) {
+      setRoomStatus("请输入 4 位面对面口令，例如 4821。");
       return;
     }
 
@@ -902,6 +941,7 @@ export default function Home() {
         }
 
         setStage("room");
+        setIsHistoryView(false);
         setCurrentRoomId(data.room.id);
         setRoomTitle(data.room.title);
         setRoomCode(data.room.joinCode);
@@ -967,6 +1007,57 @@ export default function Home() {
     await loadMessages(dbRoom.id);
     await loadRoomMembers(dbRoom.id);
     setRoomStatus("已加入 Supabase 房间。");
+  }
+
+  function openHistory(record: HistoryRecord) {
+    setStage("room");
+    setIsHistoryView(true);
+    setIsDbRoom(false);
+    setIsPublicDemoRoom(false);
+    setCurrentRoomId(record.id);
+    setRoomTitle(record.title);
+    setRoomCode(record.joinCode);
+    setRoomMembers(record.members);
+    setMessages(record.messages);
+    setFiles(record.files);
+    setPrivateAiResults(record.aiResults);
+    setFilePreview(null);
+    setActiveViewerId(currentMember.id);
+    setRoomStatus(`正在查看 ${record.endedAt} 保存的历史记录。`);
+  }
+
+  function returnHome(status = "") {
+    setStage("home");
+    setIsHistoryView(false);
+    setIsDbRoom(false);
+    setIsPublicDemoRoom(false);
+    setCurrentRoomId(null);
+    setRoomMembers(null);
+    setFilePreview(null);
+    setRoomStatus(status);
+  }
+
+  function endDiscussion() {
+    const record: HistoryRecord = {
+      id: currentRoomId ?? crypto.randomUUID(),
+      title: roomTitle || "未命名讨论",
+      joinCode: roomCode,
+      endedAt: new Date().toLocaleString("zh-CN", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      members,
+      messages,
+      files,
+      aiResults: privateAiResults,
+    };
+
+    const nextRecords = [record, ...historyRecords.filter((item) => item.id !== record.id)].slice(0, 20);
+    setHistoryRecords(nextRecords);
+    saveLocalHistory(historyOwnerId, nextRecords);
+    returnHome("讨论已结束，完整聊天和 AI 结果已保存到历史记录。");
   }
 
   function mainText(message: Message) {
@@ -1502,6 +1593,96 @@ export default function Home() {
     );
   }
 
+  if (stage === "home") {
+    return (
+      <main className="center-shell">
+        <section className="panel home-panel">
+          <div className="brand-row">
+            <div className="brand-mark">폴</div>
+            <div>
+              <p className="eyebrow">AI Study Room</p>
+              <h1>폴리톡</h1>
+            </div>
+          </div>
+
+          <div className="home-grid">
+            <section className="home-start">
+              <div className="form-grid">
+                <label>
+                  <span>显示名称</span>
+                  <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+                </label>
+
+                <div>
+                  <span className="field-label">我的主语言</span>
+                  <div className="segmented">
+                    {(["zh", "ko", "en"] as Language[]).map((item) => (
+                      <button
+                        className={language === item ? "active" : ""}
+                        key={item}
+                        onClick={() => setLanguage(item)}
+                        type="button"
+                      >
+                        {languageLabels[item]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button className="primary-action start-action" onClick={createRoom} type="button">
+                  <Plus size={19} />
+                  开始讨论
+                </button>
+
+                <div className="join-inline">
+                  <input
+                    inputMode="numeric"
+                    maxLength={4}
+                    placeholder="输入 4 位口令"
+                    value={roomCode}
+                    onChange={(event) => setRoomCode(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                  />
+                  <button className="secondary-action" onClick={joinRoom} type="button">
+                    加入
+                  </button>
+                </div>
+
+                <button className="text-button" onClick={() => setStage("auth")} type="button">
+                  学校邮箱登录
+                </button>
+              </div>
+
+              {roomStatus ? <p className="status-text">{roomStatus}</p> : null}
+            </section>
+
+            <section className="history-panel">
+              <div className="side-title-row">
+                <p className="label">历史记录</p>
+                <History size={16} />
+              </div>
+
+              {historyRecords.length ? (
+                <div className="history-list">
+                  {historyRecords.map((record) => (
+                    <button className="history-card" key={record.id} onClick={() => openHistory(record)} type="button">
+                      <strong>{record.title}</strong>
+                      <span>{record.endedAt}</span>
+                      <small>
+                        {record.messages.length} 条消息 · {record.files.length} 个文件 · {record.aiResults.length} 个 AI 结果
+                      </small>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-history">结束一次讨论后，这里会保存完整聊天、文件和 AI 结果。</p>
+              )}
+            </section>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   if (stage === "lobby") {
     return (
       <main className="center-shell">
@@ -1569,10 +1750,22 @@ export default function Home() {
           </div>
         </div>
         <div className="room-actions">
-          <button className="summary-action" disabled={isSummarizing} onClick={summarizeDiscussion} type="button">
-            {isSummarizing ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
-            {isSummarizing ? copy.summarizing : copy.summarize}
-          </button>
+          {isHistoryView ? (
+            <button className="summary-action" onClick={() => returnHome()} type="button">
+              <History size={18} />
+              返回首页
+            </button>
+          ) : (
+            <>
+              <button className="summary-action" disabled={isSummarizing} onClick={summarizeDiscussion} type="button">
+                {isSummarizing ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
+                {isSummarizing ? copy.summarizing : copy.summarize}
+              </button>
+              <button className="text-button end-action" onClick={endDiscussion} type="button">
+                结束并保存
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -1619,7 +1812,7 @@ export default function Home() {
                         <p className="secondary-text">{secondaryText(message)}</p>
                       </>
                     )}
-                    {message.fileName && message.attachmentId ? (
+                    {!isHistoryView && message.fileName && message.attachmentId ? (
                       <div className="file-actions">
                         <button onClick={() => previewUploadedFile(message)} type="button">
                           <Eye size={15} />
@@ -1637,25 +1830,29 @@ export default function Home() {
             })}
           </div>
 
-          <form className="composer" onSubmit={sendMessage}>
-            <label className="file-button" title={copy.uploadFile}>
-              {isUploadingFile ? <Loader2 className="spin" size={20} /> : <Plus size={22} />}
+          {isHistoryView ? (
+            <div className="history-readonly">这是已保存的历史记录，完整聊天保留为只读。</div>
+          ) : (
+            <form className="composer" onSubmit={sendMessage}>
+              <label className="file-button" title={copy.uploadFile}>
+                {isUploadingFile ? <Loader2 className="spin" size={20} /> : <Plus size={22} />}
+                <input
+                  accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.txt,.md,.csv"
+                  disabled={isUploadingFile}
+                  onChange={(event) => handleFile(event.target.files)}
+                  type="file"
+                />
+              </label>
               <input
-                accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.txt,.md,.csv"
-                disabled={isUploadingFile}
-                onChange={(event) => handleFile(event.target.files)}
-                type="file"
+                placeholder={copy.messagePlaceholder(activeViewer.name)}
+                value={messageText}
+                onChange={(event) => setMessageText(event.target.value)}
               />
-            </label>
-            <input
-              placeholder={copy.messagePlaceholder(activeViewer.name)}
-              value={messageText}
-              onChange={(event) => setMessageText(event.target.value)}
-            />
-            <button className="send-button" type="submit">
-              <ArrowUp size={20} />
-            </button>
-          </form>
+              <button className="send-button" type="submit">
+                <ArrowUp size={20} />
+              </button>
+            </form>
+          )}
         </div>
 
         <aside className="side-panel">
@@ -1703,10 +1900,12 @@ export default function Home() {
                       <small>{result.createdAt}</small>
                     </div>
                     <StructuredSummary text={summaryTextForLanguage(result.summary, activeViewer.language)} />
-                    <button className="mini-action share" onClick={() => sharePrivateAiResult(result)} type="button">
-                      <Send size={14} />
-                      分享到房间
-                    </button>
+                    {!isHistoryView ? (
+                      <button className="mini-action share" onClick={() => sharePrivateAiResult(result)} type="button">
+                        <Send size={14} />
+                        分享到房间
+                      </button>
+                    ) : null}
                   </article>
                 ))}
               </div>

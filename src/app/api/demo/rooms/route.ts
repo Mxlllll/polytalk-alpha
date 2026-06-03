@@ -47,7 +47,7 @@ const store =
 
 function normalizeJoinCode(input = "") {
   const digits = input.replace(/\D/g, "");
-  if (digits.length === 6) return `${digits.slice(0, 3)} ${digits.slice(3)}`;
+  if (digits.length >= 4) return digits.slice(0, 4);
   return input.trim().replace(/\s+/g, " ");
 }
 

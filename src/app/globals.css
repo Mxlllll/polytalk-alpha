@@ -134,6 +134,11 @@ input:focus-visible {
   padding: 30px;
 }
 
+.home-panel {
+  max-width: 920px;
+  padding: 34px;
+}
+
 .brand-row,
 .split-head,
 .room-header,
@@ -151,6 +156,8 @@ input:focus-visible {
   .file-chip,
   .file-actions,
   .file-actions button,
+  .join-inline,
+  .history-card,
   .side-title-row,
   .mini-action {
   display: flex;
@@ -312,6 +319,100 @@ input:hover {
   background: var(--accent-soft);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 22px;
+  align-items: start;
+}
+
+.home-start,
+.history-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.start-action {
+  min-height: 52px;
+  font-size: 16px;
+}
+
+.join-inline {
+  gap: 8px;
+}
+
+.join-inline input {
+  text-align: center;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.join-inline button {
+  flex: 0 0 92px;
+}
+
+.history-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: linear-gradient(180deg, var(--surface), var(--surface-soft));
+  box-shadow: var(--shadow-sm);
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+  max-height: 380px;
+  overflow: auto;
+}
+
+.history-card {
+  width: 100%;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 11px;
+  text-align: left;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.history-card:hover {
+  border-color: rgba(19, 116, 102, 0.3);
+  background: var(--accent-soft);
+}
+
+.history-card strong {
+  font-size: 13px;
+}
+
+.history-card span,
+.history-card small,
+.empty-history {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.end-action {
+  color: var(--accent-deep);
+  border-color: rgba(19, 116, 102, 0.22);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.history-readonly {
+  border-top: 1px solid var(--line);
+  padding: 13px 16px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  font-weight: 850;
+  text-align: center;
 }
 
 .split-head {
