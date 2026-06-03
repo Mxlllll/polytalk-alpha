@@ -38,6 +38,8 @@ type Message = {
   translations: Partial<Record<Language, string>>;
   attachmentId?: string | null;
   fileName?: string;
+  filePath?: string;
+  fileType?: string | null;
   createdAt: string;
   isPending?: boolean;
   reactions?: MessageReactions;
@@ -51,7 +53,10 @@ type DbMessageRow = {
   original_text: string;
   translations: Partial<Record<Language, string>>;
   attachment_id?: string | null;
-  attachments?: { file_name: string } | { file_name: string }[] | null;
+  attachments?:
+    | { file_name: string; file_path: string; file_type: string | null }
+    | { file_name: string; file_path: string; file_type: string | null }[]
+    | null;
   created_at: string;
 };
 
@@ -99,6 +104,7 @@ type PrivateAiResult = {
 type FilePreview = {
   fileName: string;
   imageUrl?: string;
+  documentUrl?: string;
   text: string;
 };
 
@@ -589,6 +595,19 @@ function sanitizeStorageFileName(fileName: string) {
   return extension ? `${safeName}.${extension.toLowerCase()}` : safeName;
 }
 
+function attachmentFromRow(row: DbMessageRow) {
+  return Array.isArray(row.attachments) ? row.attachments[0] : row.attachments;
+}
+
+function isInlinePreviewFile(fileName: string, fileType?: string | null) {
+  const lowerName = fileName.toLowerCase();
+  return Boolean(fileType?.startsWith("image/")) || fileType === "application/pdf" || /\.(png|jpe?g|gif|webp|pdf)$/i.test(lowerName);
+}
+
+function isImagePreviewFile(fileName: string, fileType?: string | null) {
+  return Boolean(fileType?.startsWith("image/")) || /\.(png|jpe?g|gif|webp)$/i.test(fileName);
+}
+
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
@@ -692,7 +711,9 @@ export default function Home() {
     async (roomId: string) => {
       const { data, error } = await supabase
         .from("messages")
-        .select("id, sender_id, kind, original_language, original_text, translations, attachment_id, attachments(file_name), created_at")
+        .select(
+          "id, sender_id, kind, original_language, original_text, translations, attachment_id, attachments(file_name, file_path, file_type), created_at",
+        )
         .eq("room_id", roomId)
         .order("created_at", { ascending: true });
 
@@ -702,17 +723,23 @@ export default function Home() {
       }
 
       setMessages(
-        ((data ?? []) as DbMessageRow[]).map((row) => ({
-          id: row.id,
-          senderId: row.sender_id,
-          kind: row.kind,
-          originalLanguage: row.original_language,
-          originalText: row.original_text,
-          translations: row.translations,
-          attachmentId: row.attachment_id,
-          fileName: Array.isArray(row.attachments) ? row.attachments[0]?.file_name : row.attachments?.file_name,
-          createdAt: new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        })),
+        ((data ?? []) as DbMessageRow[]).map((row) => {
+          const attachment = attachmentFromRow(row);
+
+          return {
+            id: row.id,
+            senderId: row.sender_id,
+            kind: row.kind,
+            originalLanguage: row.original_language,
+            originalText: row.original_text,
+            translations: row.translations,
+            attachmentId: row.attachment_id,
+            fileName: attachment?.file_name,
+            filePath: attachment?.file_path,
+            fileType: attachment?.file_type,
+            createdAt: new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          };
+        }),
       );
     },
     [supabase],
@@ -793,6 +820,11 @@ export default function Home() {
         },
         (payload) => {
           const row = payload.new as DbMessageRow;
+          if (row.attachment_id) {
+            loadMessages(currentRoomId);
+            return;
+          }
+
           setMessages((current) => {
             if (current.some((message) => message.id === row.id)) return current;
 
@@ -806,7 +838,6 @@ export default function Home() {
                 originalText: row.original_text,
                 translations: row.translations,
                 attachmentId: row.attachment_id,
-                fileName: Array.isArray(row.attachments) ? row.attachments[0]?.file_name : row.attachments?.file_name,
                 createdAt: new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               },
             ];
@@ -1519,21 +1550,41 @@ export default function Home() {
     };
   }
 
+  async function fileForMessage(message: Message) {
+    if (!message.attachmentId) return null;
+
+    const localFile = localFiles[message.attachmentId];
+    if (localFile) return localFile;
+
+    if (!message.filePath) return null;
+
+    const { data, error } = await supabase.storage.from("room-files").download(message.filePath);
+    if (error || !data) {
+      throw new Error(error?.message ?? "Remote file download failed");
+    }
+
+    const downloadedFile = new File([data], message.fileName ?? "uploaded-file", {
+      type: message.fileType ?? data.type ?? "",
+    });
+    setLocalFiles((current) => ({ ...current, [message.attachmentId as string]: downloadedFile }));
+    return downloadedFile;
+  }
+
   async function summarizeUploadedFile(message: Message) {
     if (!message.attachmentId) {
       setRoomStatus("这个文件缺少可总结的引用，请重新上传后再试。");
       return;
     }
 
-    const file = localFiles[message.attachmentId];
-    if (!file) {
-      setRoomStatus("当前演示版只能总结本机刚上传的文件。房间文件留存已保留，远端文件二次总结会在下一步完善。");
-      return;
-    }
-
-    setRoomStatus("正在为你分析文件并生成个人 AI 总结...");
+    setRoomStatus("正在读取文件并生成你的个人 AI 总结...");
 
     try {
+      const file = await fileForMessage(message);
+      if (!file) {
+        setRoomStatus("这个临时演示文件只保存在上传者当前浏览器里。正式房间上传到 Storage 后，可以跨设备再次总结。");
+        return;
+      }
+
       const fileSummary = await summarizeFile(file);
       const modeTitle = fileSummaryModeTitles[fileSummary.mode][activeViewer.language];
       setPrivateAiResults((current) => [
@@ -1563,29 +1614,33 @@ export default function Home() {
   async function previewUploadedFile(message: Message) {
     const fileName = message.fileName ?? "文件";
 
-    if (!message.attachmentId || !localFiles[message.attachmentId]) {
-      setFilePreview({
-        fileName,
-        text: "文件卡片已留在房间中。当前 Alpha 可以预览本机刚上传的文件；跨设备重新打开后的远端文件预览会在下一步接入 Supabase 下载。",
-      });
-      return;
-    }
-
-    const file = localFiles[message.attachmentId];
-
-    if (file.type.startsWith("image/")) {
-      const imageUrl = URL.createObjectURL(file);
-      setFilePreview({
-        fileName: file.name,
-        imageUrl,
-        text: "图片预览",
-      });
-      return;
-    }
-
-    setRoomStatus("正在提取文件预览...");
+    setRoomStatus("正在打开文件预览...");
 
     try {
+      const file = await fileForMessage(message);
+      if (!file) {
+        setFilePreview({
+          fileName,
+          text: "这个临时演示文件只保存在上传者当前浏览器里。正式房间上传到 Storage 后，可以跨设备再次打开原文件。",
+        });
+        setRoomStatus("没有找到可打开的远端文件。");
+        return;
+      }
+
+      if (isInlinePreviewFile(file.name, file.type)) {
+        const documentUrl = URL.createObjectURL(file);
+        const isImagePreview = isImagePreviewFile(file.name, file.type);
+        setFilePreview({
+          fileName: file.name,
+          documentUrl,
+          imageUrl: isImagePreview ? documentUrl : undefined,
+          text: isImagePreview ? "图片原文件预览" : "PDF 原文件预览",
+        });
+        setRoomStatus("已打开原文件预览。");
+        return;
+      }
+
+      setRoomStatus("正在提取文档文字预览...");
       const formData = new FormData();
       formData.append("file", file);
       const response = await fetch("/api/ai/file-preview", {
@@ -1609,8 +1664,8 @@ export default function Home() {
     } catch (error) {
       console.error(error);
       setFilePreview({
-        fileName: file.name,
-        text: "文件预览失败。请确认文件不是加密或损坏文件，也可以直接尝试 AI 总结。",
+        fileName,
+        text: "文件预览失败。请确认文件没有被删除、权限可读，也可以直接尝试 AI 总结。",
       });
       setRoomStatus("文件预览失败，请稍后再试。");
     }
@@ -1634,6 +1689,7 @@ export default function Home() {
       translations,
       attachmentId,
       fileName: file.name,
+      fileType: file.type || file.name.split(".").pop() || "file",
       createdAt: nowLabel(),
     };
 
@@ -1747,7 +1803,7 @@ export default function Home() {
       <main className="center-shell">
         <section className="panel auth-panel">
           <div className="brand-row">
-            <div className="brand-mark">폴</div>
+            <div className="brand-mark" aria-hidden="true" />
             <div>
               <p className="eyebrow">AI Study Room</p>
               <h1>폴리톡</h1>
@@ -1812,7 +1868,7 @@ export default function Home() {
       <main className="center-shell">
         <section className="panel home-panel">
           <div className="brand-row">
-            <div className="brand-mark">폴</div>
+            <div className="brand-mark" aria-hidden="true" />
             <div>
               <p className="eyebrow">AI Study Room</p>
               <h1>폴리톡</h1>
@@ -2141,6 +2197,14 @@ export default function Home() {
                   // Blob URLs from user-selected local files cannot be optimized by next/image.
                   // eslint-disable-next-line @next/next/no-img-element
                   <img className="file-preview-image" src={filePreview.imageUrl} alt={filePreview.fileName} />
+                ) : null}
+                {filePreview.documentUrl && !filePreview.imageUrl ? (
+                  <>
+                    <iframe className="file-preview-document" src={filePreview.documentUrl} title={filePreview.fileName} />
+                    <a className="mini-action file-open-link" href={filePreview.documentUrl} rel="noreferrer" target="_blank">
+                      新窗口打开原文件
+                    </a>
+                  </>
                 ) : null}
                 <p>{filePreview.text}</p>
               </article>

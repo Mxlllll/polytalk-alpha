@@ -25,11 +25,96 @@ function normalizeSummaryMode(value: unknown): FileSummaryMode {
   return value === "course" ? "course" : "assignment";
 }
 
-const autoSummaryInstructions =
-  "You are an academic learning assistant for international students in Korean universities. First classify the uploaded file as course or assignment. Use course for lecture slides, class notes, textbook excerpts, course screenshots, or conceptual teaching material. Use assignment for homework briefs, project requirements, submission instructions, grading rubrics, deadlines, or professor task notices. Then write the summary in Chinese, Korean, and English. Do not produce vague generic summaries. Keep sections short, useful, and beginner-friendly. Preserve clear line breaks between every section. Return only valid JSON.";
+function stringifySummaryValue(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? `- ${item}` : `- ${stringifySummaryValue(item)}`))
+      .join("\n")
+      .trim();
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value)
+      .map(([key, item]) => `${key}: ${stringifySummaryValue(item)}`)
+      .join("\n")
+      .trim();
+  }
+  return String(value ?? "").trim();
+}
 
-const autoSummaryTask =
-  "Analyze this uploaded academic file. Return JSON with mode and summary. mode must be either course or assignment. If mode is course, each language must strictly use: 【1. 课程主题（一句话）】, 【2. 核心问题】, 【3. 关键概念（最多5个）】, 【4. 讲解逻辑（重点）】, 【5. 最终结论】, 【6. 一个例子（必须有）】. If mode is assignment, each language must use compact sections: 【1. 任务目标】, 【2. 具体要求】, 【3. 截止/提交/格式】, 【4. 评分标准】, 【5. 建议分工】, 【6. 需要确认的问题】, 【7. 下一步行动】. If a field is not present, say not found instead of inventing. Use new lines between sections and avoid long paragraphs.";
+function normalizeSummary(summary: Partial<Record<Language, unknown>>): Record<Language, string> {
+  return Object.fromEntries(
+    languages.map((language) => [language, stringifySummaryValue(summary[language])]),
+  ) as Record<Language, string>;
+}
+
+const autoSummaryInstructions = `
+You are an academic learning strategist for international students in Korean universities.
+Your job is not to "briefly summarize"; your job is to help a student understand what to do or what was taught within 30 seconds.
+
+Quality rules:
+- Classify the file by content, not filename.
+- Use "course" for lecture slides, class notes, textbook excerpts, conceptual material, or course screenshots.
+- Use "assignment" for homework briefs, project instructions, grading rubrics, submission notices, deadlines, or professor requirements.
+- Ground every useful point in the extracted file text. Do not invent deadlines, grading criteria, examples, or requirements.
+- If information is missing, say "未在文件中找到" / "파일에서 찾지 못함" / "not found in the file".
+- Avoid filler such as "this document discusses many aspects" or "students should study carefully".
+- Prefer concrete nouns, verbs, deliverables, concepts, dates, formats, and professor requirements.
+- Each section must be short, scannable, and separated with line breaks.
+- Return Chinese, Korean, and English versions with the same meaning.
+- Return only valid JSON.
+`;
+
+const autoSummaryTask = `
+Analyze the uploaded academic file and return JSON with "mode" and "summary".
+
+If mode is "course", each language must use exactly these sections, translated naturally into that language:
+【1. 课程主题（一句话）】
+One sentence explaining what this class/material is about.
+
+【2. 核心问题】
+The main question or problem the lesson is trying to solve.
+
+【3. 关键概念（最多5个）】
+Up to 5 concepts. Explain each in beginner-friendly language.
+
+【4. 讲解逻辑（重点）】
+Show the teacher/material's explanation path as 1-2-3-4. This is the most important section.
+
+【5. 最终结论】
+The most important takeaway.
+
+【6. 一个例子（必须有）】
+Give one simple example. If the file has an example, use it. If not, create a clearly labeled simple learning example based only on the concepts found.
+
+If mode is "assignment", each language must use exactly these sections, translated naturally into that language:
+【1. 任务目标】
+What the student/group must produce.
+
+【2. 具体要求】
+Concrete requirements, deliverables, scope, topic rules, word/page limits, tools, language requirements, or materials.
+
+【3. 截止/提交/格式】
+Deadlines, submission channel, file format, presentation format, naming rules, and other logistics.
+
+【4. 评分标准】
+Rubric, evaluation points, percentage weights, or what the professor seems to care about.
+
+【5. 建议分工】
+Practical group-role split inferred from the assignment. If group work is not mentioned, say it may be individual.
+
+【6. 需要确认的问题】
+Only list truly missing or ambiguous points that students should ask the professor or teammates.
+
+【7. 下一步行动】
+3-5 concrete next actions students can do now.
+
+Output constraints:
+- Use the bracket headings exactly with numbers.
+- Put each bullet/action on its own line.
+- Do not write long paragraphs.
+- Never say something is required unless the file says so.
+`;
 
 function fallbackSummary(fileName: string, reason: Record<Language, string> | string): Record<Language, string> {
   const localizedReason =
@@ -48,8 +133,12 @@ function fallbackSummary(fileName: string, reason: Record<Language, string> | st
   };
 }
 
-function normalizeWhitespace(text: string) {
-  return text.replace(/\s+/g, " ").trim();
+function normalizeExtractedText(text: string) {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function decodeXmlText(value: string) {
@@ -74,19 +163,19 @@ async function extractPptxText(buffer: Buffer) {
     }),
   );
 
-  return normalizeWhitespace(slides.join("\n"));
+  return normalizeExtractedText(slides.map((slide, index) => `[Slide ${index + 1}]\n${slide}`).join("\n\n"));
 }
 
 async function ocrImage(buffer: Buffer) {
   const result = await Tesseract.recognize(buffer, ocrLanguages);
-  return normalizeWhitespace(result.data.text);
+  return normalizeExtractedText(result.data.text);
 }
 
 async function extractPdfText(buffer: Buffer) {
   const parser = new PDFParse({ data: buffer });
   try {
     const result = await parser.getText();
-    const text = normalizeWhitespace(result.text);
+    const text = normalizeExtractedText(result.text);
     if (text) return text;
 
     const screenshots = await parser.getScreenshot({
@@ -103,7 +192,7 @@ async function extractPdfText(buffer: Buffer) {
       }
     }
 
-    return normalizeWhitespace(pageTexts.join("\n"));
+    return normalizeExtractedText(pageTexts.map((text, index) => `[OCR page ${index + 1}]\n${text}`).join("\n\n"));
   } finally {
     await parser.destroy();
   }
@@ -121,7 +210,7 @@ async function extractText(file: File) {
     lowerName.endsWith(".md") ||
     lowerName.endsWith(".csv")
   ) {
-    return normalizeWhitespace(buffer.toString("utf8"));
+    return normalizeExtractedText(buffer.toString("utf8"));
   }
 
   if (type === "application/pdf" || lowerName.endsWith(".pdf")) {
@@ -133,7 +222,7 @@ async function extractText(file: File) {
     lowerName.endsWith(".docx")
   ) {
     const result = await mammoth.extractRawText({ buffer });
-    return normalizeWhitespace(result.value);
+    return normalizeExtractedText(result.value);
   }
 
   if (
@@ -200,7 +289,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await callAiJson<{ mode?: FileSummaryMode; summary: Record<Language, string> }>({
+    const result = await callAiJson<{ mode?: FileSummaryMode; summary: Partial<Record<Language, unknown>> }>({
       instructions: autoSummaryInstructions,
       input: {
         task: autoSummaryTask,
@@ -215,7 +304,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         extractedTextLength: extractedText.length,
         mode: normalizeSummaryMode(result.data.mode),
-        summary: result.data.summary,
+        summary: normalizeSummary(result.data.summary),
         source: result.source,
       } satisfies FileSummaryResponse);
     }
