@@ -1831,26 +1831,28 @@ export default function Home() {
           </div>
 
           {isHistoryView ? (
-            <div className="history-readonly">这是已保存的历史记录，完整聊天保留为只读。</div>
+            <div className="history-readonly">?????????????????????</div>
           ) : (
             <form className="composer" onSubmit={sendMessage}>
-              <label className="file-button" title={copy.uploadFile}>
-                {isUploadingFile ? <Loader2 className="spin" size={20} /> : <Plus size={22} />}
+              <div className="composer-bar">
+                <label className="file-button" title={copy.uploadFile}>
+                  {isUploadingFile ? <Loader2 className="spin" size={18} /> : <Plus size={20} />}
+                  <input
+                    accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.txt,.md,.csv"
+                    disabled={isUploadingFile}
+                    onChange={(event) => handleFile(event.target.files)}
+                    type="file"
+                  />
+                </label>
                 <input
-                  accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.txt,.md,.csv"
-                  disabled={isUploadingFile}
-                  onChange={(event) => handleFile(event.target.files)}
-                  type="file"
+                  placeholder={copy.messagePlaceholder(activeViewer.name)}
+                  value={messageText}
+                  onChange={(event) => setMessageText(event.target.value)}
                 />
-              </label>
-              <input
-                placeholder={copy.messagePlaceholder(activeViewer.name)}
-                value={messageText}
-                onChange={(event) => setMessageText(event.target.value)}
-              />
-              <button className="send-button" type="submit">
-                <ArrowUp size={20} />
-              </button>
+                <button className="send-button" type="submit">
+                  <ArrowUp size={18} />
+                </button>
+              </div>
             </form>
           )}
         </div>
