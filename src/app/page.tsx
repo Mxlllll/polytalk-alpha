@@ -1831,7 +1831,7 @@ export default function Home() {
           </div>
 
           {isHistoryView ? (
-            <div className="history-readonly">?????????????????????</div>
+            <div className="history-readonly">这是已保存的历史记录，完整聊天保留为只读。</div>
           ) : (
             <form className="composer" onSubmit={sendMessage}>
               <div className="composer-bar">
