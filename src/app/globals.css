@@ -729,13 +729,43 @@ input:hover {
   font-weight: 850;
 }
 
-.private-ai-card p {
+.private-ai-card > p {
   max-height: 160px;
   overflow: auto;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.structured-summary {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.summary-block {
+  display: grid;
+  gap: 4px;
+  border-left: 2px solid rgba(19, 116, 102, 0.24);
+  padding: 7px 0 7px 9px;
+}
+
+.summary-block h4 {
+  margin: 0;
+  color: var(--accent-deep);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.summary-block p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-line;
 }
 
 .mini-action.share {

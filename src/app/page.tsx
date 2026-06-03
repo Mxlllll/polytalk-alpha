@@ -77,6 +77,7 @@ type DbRoomMemberRow = {
 
 type FileSummaryApiResponse = {
   extractedTextLength: number;
+  mode: FileSummaryMode;
   summary: Record<Language, string>;
   source: "deepseek" | "mock";
 };
@@ -127,17 +128,16 @@ const fileSummaryModeTitles: Record<FileSummaryMode, Record<Language, string>> =
   },
 };
 
-const fileActionLabels: Record<"preview" | FileSummaryMode, Record<Language, string>> = {
+const fileActionLabels: Record<"preview" | "summarize", Record<Language, string>> = {
   preview: {
     zh: "预览",
     ko: "미리보기",
     en: "Preview",
   },
-  course: fileSummaryModeTitles.course,
-  assignment: {
-    zh: "提取作业要求",
-    ko: "과제 요구 추출",
-    en: "Extract Assignment",
+  summarize: {
+    zh: "AI 总结",
+    ko: "AI 요약",
+    en: "AI Summary",
   },
 };
 
@@ -355,6 +355,51 @@ const initialMessages: Message[] = [
 
 function nowLabel() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function structuredSummaryBlocks(text: string) {
+  const normalized = text
+    .replace(/\s*(【[^】]+】)\s*/g, "\n$1\n")
+    .replace(/([。.!?；;])\s*(\d+[.．、])/g, "$1\n$2")
+    .trim();
+  const parts = normalized.split(/(【[^】]+】)/g).map((part) => part.trim()).filter(Boolean);
+
+  if (!parts.some((part) => part.startsWith("【"))) {
+    return [{ body: normalized }];
+  }
+
+  const blocks: { heading?: string; body: string }[] = [];
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+
+    if (part.startsWith("【")) {
+      blocks.push({
+        heading: part,
+        body: (parts[index + 1] ?? "")
+          .replace(/\s*(\d+[.．、])\s*/g, "\n$1 ")
+          .trim(),
+      });
+      index += 1;
+    } else {
+      blocks.push({ body: part });
+    }
+  }
+
+  return blocks.filter((block) => block.heading || block.body);
+}
+
+function StructuredSummary({ text }: { text: string }) {
+  return (
+    <div className="structured-summary">
+      {structuredSummaryBlocks(text).map((block, index) => (
+        <section className="summary-block" key={`${block.heading ?? "summary"}-${index}`}>
+          {block.heading ? <h4>{block.heading}</h4> : null}
+          {block.body ? <p>{block.body}</p> : null}
+        </section>
+      ))}
+    </div>
+  );
 }
 
 function joinCode() {
@@ -1159,10 +1204,9 @@ export default function Home() {
     }
   }
 
-  async function summarizeFile(file: File, mode: FileSummaryMode): Promise<FileSummaryApiResponse> {
+  async function summarizeFile(file: File): Promise<FileSummaryApiResponse> {
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("mode", mode);
 
     const response = await fetch("/api/ai/file-summary", {
       method: "POST",
@@ -1196,7 +1240,7 @@ export default function Home() {
     };
   }
 
-  async function summarizeUploadedFile(message: Message, mode: FileSummaryMode) {
+  async function summarizeUploadedFile(message: Message) {
     if (!message.attachmentId) {
       setRoomStatus("这个文件缺少可总结的引用，请重新上传后再试。");
       return;
@@ -1208,11 +1252,11 @@ export default function Home() {
       return;
     }
 
-    const modeTitle = fileSummaryModeTitles[mode][activeViewer.language];
-    setRoomStatus(`正在为你生成个人${modeTitle}...`);
+    setRoomStatus("正在为你分析文件并生成个人 AI 总结...");
 
     try {
-      const fileSummary = await summarizeFile(file, mode);
+      const fileSummary = await summarizeFile(file);
+      const modeTitle = fileSummaryModeTitles[fileSummary.mode][activeViewer.language];
       setPrivateAiResults((current) => [
         {
           id: crypto.randomUUID(),
@@ -1233,7 +1277,7 @@ export default function Home() {
       );
     } catch (error) {
       console.error(error);
-      setRoomStatus(`${modeTitle}生成失败，请稍后再试。`);
+      setRoomStatus("AI 总结生成失败，请稍后再试。");
     }
   }
 
@@ -1243,7 +1287,7 @@ export default function Home() {
     if (!message.attachmentId || !localFiles[message.attachmentId]) {
       setFilePreview({
         fileName,
-        text: "文件卡片已留在房间中。当前展示版的全文预览仅支持本机刚上传的文本类文件；PDF/Word/PPT/图片可以选择“课堂总结”或“提取作业要求”让 AI 读取。",
+        text: "文件卡片已留在房间中。当前展示版的全文预览仅支持本机刚上传的文本类文件；PDF/Word/PPT/图片可以点击“AI 总结”，让 AI 自动判断内容类型并整理。",
       });
       return;
     }
@@ -1263,7 +1307,7 @@ export default function Home() {
 
     setFilePreview({
       fileName: file.name,
-      text: "这个文件已经保留在房间里。PDF/Word/PPT/图片的全文预览会在后续版本做成独立阅读器；现在可以先按需要选择“课堂总结”或“提取作业要求”。",
+      text: "这个文件已经保留在房间里。PDF/Word/PPT/图片的全文预览会在后续版本做成独立阅读器；现在可以先点击“AI 总结”，让 AI 自动判断是课堂内容还是作业要求。",
     });
   }
 
@@ -1320,7 +1364,7 @@ export default function Home() {
         setRoomMembers(demoData.room.members);
         setMessages(demoData.room.messages);
         setFiles(demoData.room.files);
-        setRoomStatus("文件卡片已发送到房间。需要时可以选择“课堂总结”或“提取作业要求”。");
+        setRoomStatus("文件卡片已发送到房间。需要时可以点击“AI 总结”。");
       } catch (error) {
         console.error(error);
         setRoomStatus("公开测试房间文件消息保存失败，请稍后再试。");
@@ -1334,7 +1378,7 @@ export default function Home() {
       setFiles((current) => [...current, file.name]);
       setMessages((current) => [...current, fileMessage]);
       setIsUploadingFile(false);
-      setRoomStatus("文件卡片已发送。需要时可以选择“课堂总结”或“提取作业要求”。");
+      setRoomStatus("文件卡片已发送。需要时可以点击“AI 总结”。");
       return;
     }
 
@@ -1390,7 +1434,7 @@ export default function Home() {
     setFiles((current) => [...current, file.name]);
     await loadMessages(currentRoomId);
     setIsUploadingFile(false);
-    setRoomStatus("文件卡片已上传到房间。需要时可以选择“课堂总结”或“提取作业要求”。");
+    setRoomStatus("文件卡片已上传到房间。需要时可以点击“AI 总结”。");
   }
 
   if (stage === "auth") {
@@ -1563,13 +1607,9 @@ export default function Home() {
                           <Eye size={15} />
                           {fileActionLabels.preview[activeViewer.language]}
                         </button>
-                        <button onClick={() => summarizeUploadedFile(message, "course")} type="button">
+                        <button onClick={() => summarizeUploadedFile(message)} type="button">
                           <Sparkles size={15} />
-                          {fileActionLabels.course[activeViewer.language]}
-                        </button>
-                        <button onClick={() => summarizeUploadedFile(message, "assignment")} type="button">
-                          <FileText size={15} />
-                          {fileActionLabels.assignment[activeViewer.language]}
+                          {fileActionLabels.summarize[activeViewer.language]}
                         </button>
                       </div>
                     ) : null}
@@ -1644,7 +1684,7 @@ export default function Home() {
                       <strong>{result.fileName ? `${result.title} · ${result.fileName}` : result.title}</strong>
                       <small>{result.createdAt}</small>
                     </div>
-                    <p>{summaryTextForLanguage(result.summary, activeViewer.language)}</p>
+                    <StructuredSummary text={summaryTextForLanguage(result.summary, activeViewer.language)} />
                     <button className="mini-action share" onClick={() => sharePrivateAiResult(result)} type="button">
                       <Send size={14} />
                       分享到房间

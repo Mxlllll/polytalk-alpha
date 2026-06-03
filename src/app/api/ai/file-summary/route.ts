@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 
 type FileSummaryResponse = {
   extractedTextLength: number;
+  mode: FileSummaryMode;
   summary: Record<Language, string>;
   source: "deepseek" | "mock";
 };
@@ -20,27 +21,15 @@ const languages: Language[] = ["zh", "ko", "en"];
 const ocrLanguages = process.env.OCR_LANGUAGES || "eng+kor+chi_sim";
 const ocrMaxPdfPages = Number(process.env.OCR_MAX_PDF_PAGES || 3);
 
-function parseSummaryMode(value: FormDataEntryValue | null): FileSummaryMode {
+function normalizeSummaryMode(value: unknown): FileSummaryMode {
   return value === "course" ? "course" : "assignment";
 }
 
-function summaryPromptForMode(mode: FileSummaryMode) {
-  if (mode === "course") {
-    return {
-      instructions:
-        "You are an academic learning assistant for international students in Korean universities. Summarize lecture slides, class notes, textbook excerpts, or screenshots so a student can understand the class in 30 seconds. Do not write long paragraphs. Avoid fluff. Explain for beginners. Return only valid JSON.",
-      task:
-        "Create a structured class summary in Chinese, Korean, and English. For each language, strictly use this structure: 【1. 课程主题（一句话）】one sentence explaining what the class is about; 【2. 核心问题】what problem the class tries to solve; 【3. 关键概念（最多5个）】up to five concepts explained simply; 【4. 讲解逻辑（重点）】numbered 1-2-3-4 steps showing how the teacher explains it; 【5. 最终结论】the most important takeaway; 【6. 一个例子（必须有）】one simple example that helps a beginner understand. Keep every item short.",
-    };
-  }
+const autoSummaryInstructions =
+  "You are an academic learning assistant for international students in Korean universities. First classify the uploaded file as course or assignment. Use course for lecture slides, class notes, textbook excerpts, course screenshots, or conceptual teaching material. Use assignment for homework briefs, project requirements, submission instructions, grading rubrics, deadlines, or professor task notices. Then write the summary in Chinese, Korean, and English. Do not produce vague generic summaries. Keep sections short, useful, and beginner-friendly. Preserve clear line breaks between every section. Return only valid JSON.";
 
-  return {
-    instructions:
-      "You are an academic assignment analyst for international students in Korean universities. Do not produce a generic file summary. Extract the parts that help a study group act: assignment objective, deliverables, deadline, format rules, grading criteria, required sources, constraints, risks, and questions to ask the professor. If a field is not present, say it is not found instead of inventing. Return only valid JSON.",
-    task:
-      "Analyze this uploaded academic file in Chinese, Korean, and English. Each language should use compact sections: 1) what this file asks the group to do, 2) concrete requirements and grading criteria, 3) deadline/format/submission details if present, 4) suggested task split, 5) unclear points to confirm with the professor or teammates, 6) next actions.",
-  };
-}
+const autoSummaryTask =
+  "Analyze this uploaded academic file. Return JSON with mode and summary. mode must be either course or assignment. If mode is course, each language must strictly use: 【1. 课程主题（一句话）】, 【2. 核心问题】, 【3. 关键概念（最多5个）】, 【4. 讲解逻辑（重点）】, 【5. 最终结论】, 【6. 一个例子（必须有）】. If mode is assignment, each language must use compact sections: 【1. 任务目标】, 【2. 具体要求】, 【3. 截止/提交/格式】, 【4. 评分标准】, 【5. 建议分工】, 【6. 需要确认的问题】, 【7. 下一步行动】. If a field is not present, say not found instead of inventing. Use new lines between sections and avoid long paragraphs.";
 
 function fallbackSummary(fileName: string, reason: Record<Language, string> | string): Record<Language, string> {
   const localizedReason =
@@ -164,13 +153,12 @@ async function extractText(file: File) {
 export async function POST(request: Request) {
   const formData = await request.formData();
   const file = formData.get("file");
-  const mode = parseSummaryMode(formData.get("mode"));
-  const prompt = summaryPromptForMode(mode);
 
   if (!(file instanceof File)) {
     return NextResponse.json(
       {
         extractedTextLength: 0,
+        mode: "assignment",
         summary: fallbackSummary("File", {
           zh: "没有收到有效文件。",
           ko: "유효한 파일을 받지 못했습니다.",
@@ -205,27 +193,28 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       extractedTextLength: 0,
+      mode: "assignment",
       summary: fallbackSummary(file.name, reason),
       source: "mock",
     } satisfies FileSummaryResponse);
   }
 
   try {
-    const result = await callAiJson<{ summary: Record<Language, string> }>({
-      instructions: prompt.instructions,
+    const result = await callAiJson<{ mode?: FileSummaryMode; summary: Record<Language, string> }>({
+      instructions: autoSummaryInstructions,
       input: {
-        task: prompt.task,
-        mode,
+        task: autoSummaryTask,
         fileName: file.name,
         targetLanguages: languageInstruction(languages),
         extractedText,
-        expectedJsonShape: { summary: { zh: "string", ko: "string", en: "string" } },
+        expectedJsonShape: { mode: "course | assignment", summary: { zh: "string", ko: "string", en: "string" } },
       },
     });
 
     if (result?.data.summary) {
       return NextResponse.json({
         extractedTextLength: extractedText.length,
+        mode: normalizeSummaryMode(result.data.mode),
         summary: result.data.summary,
         source: result.source,
       } satisfies FileSummaryResponse);
@@ -236,6 +225,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     extractedTextLength: extractedText.length,
+    mode: "assignment",
     summary: fallbackSummary(file.name, {
       zh: "文件文字已提取，但 AI 总结暂时失败，请稍后重试。",
       ko: "파일 텍스트는 추출했지만 AI 요약에 실패했습니다. 잠시 후 다시 시도해 주세요.",
