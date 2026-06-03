@@ -829,6 +829,58 @@ input:hover {
   background: var(--surface);
 }
 
+.reaction-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid rgba(232, 227, 220, 0.72);
+}
+
+.message.mine .reaction-row {
+  border-top-color: rgba(255, 255, 255, 0.16);
+}
+
+.reaction-button {
+  min-width: 34px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid rgba(232, 227, 220, 0.82);
+  border-radius: 999px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.reaction-button strong {
+  color: inherit;
+  font-size: 11px;
+}
+
+.reaction-button.active {
+  border-color: rgba(255, 75, 62, 0.32);
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+}
+
+.message.mine .reaction-button {
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.message.mine .reaction-button.active {
+  border-color: rgba(255, 255, 255, 0.42);
+  color: white;
+  background: rgba(255, 255, 255, 0.2);
+}
+
 .composer {
   padding: 12px 16px 16px;
   background:

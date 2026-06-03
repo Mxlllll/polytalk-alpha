@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
 type Language = "zh" | "ko" | "en";
+type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
+type MessageReactions = Partial<Record<ReactionKey, string[]>>;
 
 type DemoMember = {
   id: string;
@@ -19,6 +21,7 @@ type DemoMessage = {
   attachmentId?: string | null;
   fileName?: string;
   createdAt: string;
+  reactions?: MessageReactions;
 };
 
 type DemoRoom = {
@@ -61,6 +64,16 @@ function upsertMember(room: DemoRoom, member: DemoMember) {
   room.members.push(member);
 }
 
+function toggleReaction(message: DemoMessage, reactionKey: ReactionKey, userId: string) {
+  const currentReactions: MessageReactions = message.reactions ?? {};
+  const users = currentReactions[reactionKey] ?? [];
+  const nextUsers = users.includes(userId) ? users.filter((id) => id !== userId) : [...users, userId];
+  message.reactions = {
+    ...currentReactions,
+    [reactionKey]: nextUsers,
+  };
+}
+
 function serializeRoom(room: DemoRoom) {
   return {
     id: room.id,
@@ -74,13 +87,15 @@ function serializeRoom(room: DemoRoom) {
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
-    action: "create" | "join" | "sync" | "send" | "addFile";
+    action: "create" | "join" | "sync" | "send" | "addFile" | "react";
     title?: string;
     joinCode?: string;
     roomId?: string;
     member?: DemoMember;
     message?: DemoMessage;
+    messageId?: string;
     fileName?: string;
+    reactionKey?: ReactionKey;
   };
 
   if (body.action === "create") {
@@ -123,6 +138,13 @@ export async function POST(request: Request) {
 
   if (body.action === "addFile" && body.fileName && !room.files.includes(body.fileName)) {
     room.files.push(body.fileName);
+  }
+
+  if (body.action === "react" && body.messageId && body.reactionKey && body.member) {
+    const message = room.messages.find((item) => item.id === body.messageId);
+    if (message) {
+      toggleReaction(message, body.reactionKey, body.member.id);
+    }
   }
 
   return NextResponse.json({ room: serializeRoom(room) });

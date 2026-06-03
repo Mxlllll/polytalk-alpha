@@ -19,6 +19,8 @@ import { buildMockTranslations } from "@/lib/ai/mock";
 type Language = "zh" | "ko" | "en";
 type Stage = "home" | "auth" | "lobby" | "room";
 type FileSummaryMode = "course" | "assignment";
+type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
+type MessageReactions = Partial<Record<ReactionKey, string[]>>;
 
 type Member = {
   id: string;
@@ -38,6 +40,7 @@ type Message = {
   fileName?: string;
   createdAt: string;
   isPending?: boolean;
+  reactions?: MessageReactions;
 };
 
 type DbMessageRow = {
@@ -121,6 +124,18 @@ type DemoRoomApiResponse = {
   };
   error?: string;
 };
+
+const reactionOptions: {
+  emoji: string;
+  key: ReactionKey;
+  label: Record<Language, string>;
+}[] = [
+  { key: "got_it", emoji: "✅", label: { zh: "收到", ko: "확인", en: "Got it" } },
+  { key: "agree", emoji: "👍", label: { zh: "同意", ko: "동의", en: "Agree" } },
+  { key: "question", emoji: "❓", label: { zh: "有疑问", ko: "질문", en: "Question" } },
+  { key: "watching", emoji: "👀", label: { zh: "在看", ko: "보고 있어요", en: "Watching" } },
+  { key: "thanks", emoji: "🙏", label: { zh: "辛苦了", ko: "수고했어요", en: "Thanks" } },
+];
 
 const languageLabels: Record<Language, string> = {
   zh: "中文",
@@ -1184,6 +1199,66 @@ export default function Home() {
     return `${languageLabels[senderLanguage]} ${copy.original} · ${message.originalText}`;
   }
 
+  function toggleReactionLocally(messageId: string, reactionKey: ReactionKey, userId: string) {
+    setMessages((current) =>
+      current.map((message) => {
+        if (message.id !== messageId) return message;
+
+        const reactions = message.reactions ?? {};
+        const currentUsers = reactions[reactionKey] ?? [];
+        const nextUsers = currentUsers.includes(userId)
+          ? currentUsers.filter((id) => id !== userId)
+          : [...currentUsers, userId];
+
+        return {
+          ...message,
+          reactions: {
+            ...reactions,
+            [reactionKey]: nextUsers,
+          },
+        };
+      }),
+    );
+  }
+
+  async function toggleMessageReaction(messageId: string, reactionKey: ReactionKey) {
+    if (isHistoryView) return;
+
+    const reactor = isPublicDemoRoom ? currentMember : activeViewer;
+    toggleReactionLocally(messageId, reactionKey, reactor.id);
+
+    if (isPublicDemoRoom && currentRoomId) {
+      try {
+        const response = await fetch("/api/demo/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "react",
+            roomId: currentRoomId,
+            member: currentMember,
+            messageId,
+            reactionKey,
+          }),
+        });
+        const data = (await response.json()) as DemoRoomApiResponse;
+        if (!response.ok || !data.room) throw new Error(data.error ?? "Demo reaction failed");
+
+        setRoomMembers(data.room.members);
+        setMessages(data.room.messages);
+        setFiles(data.room.files);
+      } catch (error) {
+        console.error(error);
+        toggleReactionLocally(messageId, reactionKey, reactor.id);
+        setRoomStatus("反应发送失败，请稍后再试。");
+      }
+      return;
+    }
+
+    if (isDbRoom) {
+      setRoomStatus("反应已在本机显示。正式多人同步会在下一步加入数据库保存。");
+    }
+  }
+
   async function translateText(text: string, sourceLanguage: Language) {
     try {
       const response = await fetch("/api/ai/translate", {
@@ -1933,6 +2008,7 @@ export default function Home() {
               const isFileCard = Boolean(message.fileName && message.attachmentId);
               const isSummaryMessage = !isFileCard && (message.kind === "file_summary" || message.kind === "discussion_summary");
               const shouldShowSummaryOriginal = isSummaryMessage && message.originalLanguage !== activeViewer.language;
+              const reactorId = isPublicDemoRoom ? currentMember.id : activeViewer.id;
 
               return (
                 <article className={`message ${isMine ? "mine" : ""} ${isAi ? "ai" : ""}`} key={message.id}>
@@ -1975,6 +2051,28 @@ export default function Home() {
                           <Sparkles size={15} />
                           {fileActionLabels.summarize[activeViewer.language]}
                         </button>
+                      </div>
+                    ) : null}
+                    {!message.isPending ? (
+                      <div className="reaction-row" aria-label="Message reactions">
+                        {reactionOptions.map((reaction) => {
+                          const users = message.reactions?.[reaction.key] ?? [];
+                          const isActive = users.includes(reactorId);
+
+                          return (
+                            <button
+                              className={isActive ? "reaction-button active" : "reaction-button"}
+                              disabled={isHistoryView}
+                              key={reaction.key}
+                              onClick={() => toggleMessageReaction(message.id, reaction.key)}
+                              title={reaction.label[activeViewer.language]}
+                              type="button"
+                            >
+                              <span>{reaction.emoji}</span>
+                              {users.length ? <strong>{users.length}</strong> : null}
+                            </button>
+                          );
+                        })}
                       </div>
                     ) : null}
                   </div>
