@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { extractPdfTextFromBuffer } from "@/lib/server/pdf-text";
 
 export const runtime = "nodejs";
 
@@ -41,33 +42,7 @@ async function extractPptxText(buffer: Buffer) {
 }
 
 async function extractPdfText(buffer: Buffer) {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(buffer),
-    disableFontFace: true,
-    isEvalSupported: false,
-    useWorkerFetch: false,
-  });
-  const document = await loadingTask.promise;
-
-  try {
-    const pages: string[] = [];
-
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const pageText = content.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .join(" ");
-
-      pages.push(pageText);
-      page.cleanup();
-    }
-
-    return normalizeWhitespace(pages.join("\n"));
-  } finally {
-    await document.destroy();
-  }
+  return normalizeWhitespace(await extractPdfTextFromBuffer(buffer));
 }
 
 async function extractText(file: File) {

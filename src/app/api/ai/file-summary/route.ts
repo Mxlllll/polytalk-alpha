@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Language } from "@/lib/ai/mock";
 import { callAiJson, languageInstruction } from "@/lib/ai/provider";
+import { extractPdfTextFromBuffer } from "@/lib/server/pdf-text";
 
 export const runtime = "nodejs";
 
@@ -169,33 +170,7 @@ async function ocrImage(buffer: Buffer) {
 }
 
 async function extractPdfText(buffer: Buffer) {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const loadingTask = pdfjs.getDocument({
-    data: new Uint8Array(buffer),
-    disableFontFace: true,
-    isEvalSupported: false,
-    useWorkerFetch: false,
-  });
-  const document = await loadingTask.promise;
-
-  try {
-    const pages: string[] = [];
-
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const pageText = content.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .join(" ");
-
-      pages.push(`[Page ${pageNumber}]\n${pageText}`);
-      page.cleanup();
-    }
-
-    return normalizeExtractedText(pages.join("\n\n"));
-  } finally {
-    await document.destroy();
-  }
+  return normalizeExtractedText(await extractPdfTextFromBuffer(buffer, true));
 }
 
 async function extractText(file: File) {
