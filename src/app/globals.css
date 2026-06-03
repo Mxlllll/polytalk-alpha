@@ -224,6 +224,7 @@ input {
   padding: 0 14px;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.96);
+  font-size: 16px;
 }
 
 input:hover {
@@ -1365,6 +1366,6 @@ input:hover {
   .composer-bar input:not([type="file"]) {
     min-height: 38px;
     padding: 0 2px;
-    font-size: 14px;
+    font-size: 16px;
   }
 }
