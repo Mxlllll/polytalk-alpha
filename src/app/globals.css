@@ -491,14 +491,16 @@ input:hover {
 }
 
 .room-code-pill {
-  gap: 7px;
-  border: 1px solid rgba(183, 121, 44, 0.28);
-  border-radius: var(--radius);
-  padding: 7px 10px;
-  color: var(--amber);
-  background: linear-gradient(180deg, var(--amber-soft), rgba(255, 255, 255, 0.84));
-  box-shadow: 0 8px 20px rgba(183, 121, 44, 0.08);
-  font-size: 13px;
+  gap: 8px;
+  border: 1px solid rgba(194, 209, 203, 0.86);
+  border-radius: 999px;
+  padding: 6px 9px 6px 11px;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 10px 24px rgba(25, 43, 38, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0;
 }
@@ -510,8 +512,12 @@ input:hover {
 }
 
 .room-code-pill strong {
-  color: #8a571f;
-  font-size: 15px;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #8f6126;
+  background: rgba(247, 234, 216, 0.7);
+  font-size: 14px;
+  line-height: 1.25;
 }
 
 .room-actions {
