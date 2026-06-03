@@ -12,10 +12,11 @@ type DemoMember = {
 type DemoMessage = {
   id: string;
   senderId: string;
-  kind: "text" | "file_summary" | "discussion_summary";
+  kind: "text" | "file" | "file_summary" | "discussion_summary";
   originalLanguage: Language;
   originalText: string;
   translations: Partial<Record<Language, string>>;
+  attachmentId?: string | null;
   fileName?: string;
   createdAt: string;
 };

@@ -25,9 +25,10 @@ export async function POST(request: Request) {
   try {
     const result = await callAiJson<{ summary: Record<Language, string> }>({
       instructions:
-        "You summarize multilingual academic group discussions for Korean university students. Be concise, concrete, and preserve action items. Return only valid JSON.",
+        "You are an academic collaboration assistant for international students in Korean universities. Do not write a vague recap. Extract useful work information: decisions, unresolved questions, task ownership, deadlines, professor requirements, risks, and next actions. If information is missing, explicitly say what still needs confirmation. Return only valid JSON.",
       input: {
-        task: "Summarize the discussion in Chinese, Korean, and English.",
+        task:
+          "Create a practical group-work brief from this discussion in Chinese, Korean, and English. Each language should use compact sections: 1) confirmed decisions, 2) tasks and owners if mentioned, 3) professor/assignment requirements, 4) unresolved questions, 5) next actions. Prefer concrete bullets over generic sentences.",
         targetLanguages: languageInstruction(languages),
         messages: body.messages,
         expectedJsonShape: { summary: { zh: "string", ko: "string", en: "string" } },

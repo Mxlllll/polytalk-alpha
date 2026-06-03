@@ -187,9 +187,10 @@ export async function POST(request: Request) {
   try {
     const result = await callAiJson<{ summary: Record<Language, string> }>({
       instructions:
-        "You summarize academic files for multilingual Korean university group work. Be accurate, concise, and extract concrete requirements, deadlines, roles, grading criteria, questions, and action items. Return only valid JSON.",
+        "You are an academic assignment analyst for international students in Korean universities. Do not produce a generic file summary. Extract the parts that help a study group act: assignment objective, deliverables, deadline, format rules, grading criteria, required sources, constraints, risks, and questions to ask the professor. If a field is not present, say it is not found instead of inventing. Return only valid JSON.",
       input: {
-        task: "Summarize this uploaded file in Chinese, Korean, and English.",
+        task:
+          "Analyze this uploaded academic file in Chinese, Korean, and English. Each language should use compact sections: 1) what this file asks the group to do, 2) concrete requirements and grading criteria, 3) deadline/format/submission details if present, 4) suggested task split, 5) unclear points to confirm with the professor or teammates, 6) next actions.",
         fileName: file.name,
         targetLanguages: languageInstruction(languages),
         extractedText,

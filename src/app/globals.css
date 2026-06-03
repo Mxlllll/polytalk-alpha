@@ -148,7 +148,11 @@ input:focus-visible {
   .icon-button,
   .file-button,
   .send-button,
-  .file-chip {
+  .file-chip,
+  .file-actions,
+  .file-actions button,
+  .side-title-row,
+  .mini-action {
   display: flex;
   align-items: center;
 }
@@ -556,6 +560,38 @@ input:hover {
   flex: 0 0 auto;
 }
 
+.file-actions {
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.file-actions button,
+.mini-action {
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px solid rgba(194, 209, 203, 0.86);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.message.mine .file-actions button {
+  border-color: rgba(255, 255, 255, 0.28);
+  color: white;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.file-actions button:hover,
+.mini-action:hover {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+
 .composer {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr) 42px;
@@ -655,6 +691,58 @@ input:hover {
 .member small {
   color: var(--faint);
   font-size: 12px;
+}
+
+.side-title-row,
+.private-ai-head {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.private-ai-section {
+  gap: 10px;
+}
+
+.private-ai-list {
+  display: grid;
+  gap: 9px;
+}
+
+.private-ai-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(194, 209, 203, 0.9);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow-sm);
+}
+
+.private-ai-card strong {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.private-ai-card small {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.private-ai-card p {
+  max-height: 160px;
+  overflow: auto;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.mini-action.share {
+  width: fit-content;
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+  border-color: rgba(19, 116, 102, 0.2);
 }
 
 .spin {

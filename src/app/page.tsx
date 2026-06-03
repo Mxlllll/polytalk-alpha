@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowUp,
+  Eye,
   FileText,
   Loader2,
   LogOut,
   Plus,
+  Send,
   Sparkles,
   Users,
 } from "lucide-react";
@@ -26,7 +28,7 @@ type Member = {
 type Message = {
   id: string;
   senderId: string;
-  kind: "text" | "file_summary" | "discussion_summary";
+  kind: "text" | "file" | "file_summary" | "discussion_summary";
   originalLanguage: Language;
   originalText: string;
   translations: Partial<Record<Language, string>>;
@@ -76,6 +78,21 @@ type FileSummaryApiResponse = {
   extractedTextLength: number;
   summary: Record<Language, string>;
   source: "deepseek" | "mock";
+};
+
+type PrivateAiResult = {
+  id: string;
+  kind: "discussion_summary" | "file_summary";
+  title: string;
+  fileName?: string;
+  summary: Record<Language, string>;
+  source: "deepseek" | "mock";
+  createdAt: string;
+};
+
+type FilePreview = {
+  fileName: string;
+  text: string;
 };
 
 type DemoRoomApiResponse = {
@@ -387,6 +404,9 @@ export default function Home() {
   const [messageText, setMessageText] = useState("");
   const [messages, setMessages] = useState(initialMessages);
   const [, setFiles] = useState<string[]>([]);
+  const [localFiles, setLocalFiles] = useState<Record<string, File>>({});
+  const [privateAiResults, setPrivateAiResults] = useState<PrivateAiResult[]>([]);
+  const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
 
@@ -1005,13 +1025,14 @@ export default function Home() {
     setRoomStatus("正在生成讨论总结...");
 
     try {
+      const discussionMessages = messages.filter((message) => message.kind === "text");
       const response = await fetch("/api/ai/summarize", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          messages: messages.map((message) => ({
+          messages: discussionMessages.map((message) => ({
             senderName: members.find((member) => member.id === message.senderId)?.name ?? "AI",
             originalLanguage: message.originalLanguage,
             originalText: message.originalText,
@@ -1026,19 +1047,45 @@ export default function Home() {
         source: "deepseek" | "mock";
       };
 
-      const summaryMessage = {
-        id: crypto.randomUUID(),
-        senderId: "ai",
-        kind: "discussion_summary" as const,
-        originalLanguage: "zh" as const,
-        originalText: data.summary.zh,
-        translations: {
-          ko: data.summary.ko,
-          en: data.summary.en,
+      setPrivateAiResults((current) => [
+        {
+          id: crypto.randomUUID(),
+          kind: "discussion_summary",
+          title: "讨论总结",
+          summary: data.summary,
+          source: data.source,
+          createdAt: nowLabel(),
         },
-        createdAt: nowLabel(),
-      };
+        ...current,
+      ]);
 
+      setRoomStatus(
+        data.source === "deepseek" ? "讨论总结已生成，只在你的 AI 结果里可见。" : "讨论总结已生成（mock fallback），只在你的 AI 结果里可见。",
+      );
+    } catch (error) {
+      console.error(error);
+      setRoomStatus("讨论总结失败，请稍后再试。");
+    } finally {
+      setIsSummarizing(false);
+    }
+  }
+
+  async function sharePrivateAiResult(result: PrivateAiResult) {
+    const summaryMessage = {
+      id: crypto.randomUUID(),
+      senderId: "ai",
+      kind: result.kind,
+      originalLanguage: "zh" as const,
+      originalText: result.summary.zh,
+      translations: {
+        ko: result.summary.ko,
+        en: result.summary.en,
+      },
+      fileName: result.fileName,
+      createdAt: nowLabel(),
+    };
+
+    try {
       if (isDbRoom && currentRoomId && sessionUserId) {
         const { error } = await supabase.from("messages").insert({
           id: summaryMessage.id,
@@ -1051,7 +1098,7 @@ export default function Home() {
         });
 
         if (error) {
-          setRoomStatus(`讨论总结保存失败：${error.message}`);
+          setRoomStatus(`AI 结果分享失败：${error.message}`);
           return;
         }
 
@@ -1077,12 +1124,10 @@ export default function Home() {
         setMessages((current) => [...current, summaryMessage]);
       }
 
-      setRoomStatus(data.source === "deepseek" ? "讨论总结已由 DeepSeek 生成。" : "讨论总结已生成（当前使用 mock fallback）。");
+      setRoomStatus("AI 结果已分享到房间。");
     } catch (error) {
       console.error(error);
-      setRoomStatus("讨论总结失败，请稍后再试。");
-    } finally {
-      setIsSummarizing(false);
+      setRoomStatus("AI 结果分享失败，请稍后再试。");
     }
   }
 
@@ -1109,48 +1154,113 @@ export default function Home() {
     ) as Partial<Record<Language, string>>;
   }
 
+  function fileCardText(fileName: string, fileLanguage: Language) {
+    const text: Record<Language, string> = {
+      zh: `${fileName} 已上传。你可以先查看文件卡片，需要时再生成自己的 AI 总结。`,
+      ko: `${fileName} 파일이 업로드되었습니다. 필요할 때 내 AI 요약을 생성할 수 있습니다.`,
+      en: `${fileName} was uploaded. You can review the file card first and generate your own AI summary when needed.`,
+    };
+
+    return {
+      originalText: text[fileLanguage],
+      translations: translationsForSummary(text, fileLanguage),
+    };
+  }
+
+  async function summarizeUploadedFile(message: Message) {
+    if (!message.attachmentId) {
+      setRoomStatus("这个文件缺少可总结的引用，请重新上传后再试。");
+      return;
+    }
+
+    const file = localFiles[message.attachmentId];
+    if (!file) {
+      setRoomStatus("当前演示版只能总结本机刚上传的文件。房间文件留存已保留，远端文件二次总结会在下一步完善。");
+      return;
+    }
+
+    setRoomStatus("正在为你生成个人文件总结...");
+
+    try {
+      const fileSummary = await summarizeFile(file);
+      setPrivateAiResults((current) => [
+        {
+          id: crypto.randomUUID(),
+          kind: "file_summary",
+          title: "文件总结",
+          fileName: message.fileName ?? file.name,
+          summary: fileSummary.summary,
+          source: fileSummary.source,
+          createdAt: nowLabel(),
+        },
+        ...current,
+      ]);
+
+      setRoomStatus(
+        fileSummary.source === "deepseek"
+          ? `文件总结已生成，只在你的 AI 结果里可见。提取了 ${fileSummary.extractedTextLength} 个字符。`
+          : "文件总结已生成（mock fallback），只在你的 AI 结果里可见。",
+      );
+    } catch (error) {
+      console.error(error);
+      setRoomStatus("文件总结失败，请稍后再试。");
+    }
+  }
+
+  async function previewUploadedFile(message: Message) {
+    const fileName = message.fileName ?? "文件";
+
+    if (!message.attachmentId || !localFiles[message.attachmentId]) {
+      setFilePreview({
+        fileName,
+        text: "文件卡片已留在房间中。当前展示版的全文预览仅支持本机刚上传的文本类文件；PDF/Word/PPT/图片可以点击“总结给我看”让 AI 读取。",
+      });
+      return;
+    }
+
+    const file = localFiles[message.attachmentId];
+    if (
+      file.type.startsWith("text/") ||
+      /\.(txt|md|csv)$/i.test(file.name)
+    ) {
+      const text = await file.text();
+      setFilePreview({
+        fileName: file.name,
+        text: text.slice(0, 2400) || "这个文件暂时没有可预览的文本内容。",
+      });
+      return;
+    }
+
+    setFilePreview({
+      fileName: file.name,
+      text: "这个文件已经保留在房间里。PDF/Word/PPT/图片的全文预览会在后续版本做成独立阅读器；现在可以先点击“总结给我看”，让 AI 提取作业要求、评分标准和行动项。",
+    });
+  }
+
   async function handleFile(fileList: FileList | null) {
     const file = fileList?.[0];
     if (!file) return;
 
     setIsUploadingFile(true);
-    setRoomStatus("正在读取文件并生成中/韩/英摘要...");
+    setRoomStatus("正在上传文件卡片...");
 
-    let fileSummary: FileSummaryApiResponse;
+    const attachmentId = crypto.randomUUID();
+    const { originalText, translations } = fileCardText(file.name, currentMember.language);
+    const fileMessage: Message = {
+      id: crypto.randomUUID(),
+      senderId: currentMember.id,
+      kind: "file",
+      originalLanguage: currentMember.language,
+      originalText,
+      translations,
+      attachmentId,
+      fileName: file.name,
+      createdAt: nowLabel(),
+    };
 
-    try {
-      fileSummary = await summarizeFile(file);
-    } catch (error) {
-      console.error(error);
-      fileSummary = {
-        extractedTextLength: 0,
-        source: "mock",
-        summary: {
-          zh: `${file.name} 已上传，但文件摘要暂时生成失败，请稍后重试。`,
-          ko: `${file.name} 파일이 업로드되었지만 요약 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.`,
-          en: `${file.name} was uploaded, but the file summary failed. Please try again later.`,
-        },
-      };
-    }
-
-    const summary = fileSummary.summary;
-    const uploaderLanguage =
-      members.find((member) => member.id === sessionUserId)?.language ?? activeViewer.language ?? language;
-    const originalText = summaryTextForLanguage(summary, uploaderLanguage);
-    const translations = translationsForSummary(summary, uploaderLanguage);
+    setLocalFiles((current) => ({ ...current, [attachmentId]: file }));
 
     if (isPublicDemoRoom && currentRoomId) {
-      const demoFileMessage = {
-        id: crypto.randomUUID(),
-        senderId: currentMember.id,
-        kind: "file_summary" as const,
-        originalLanguage: currentMember.language,
-        originalText: summaryTextForLanguage(summary, currentMember.language),
-        translations: translationsForSummary(summary, currentMember.language),
-        fileName: file.name,
-        createdAt: nowLabel(),
-      };
-
       try {
         const fileResponse = await fetch("/api/demo/rooms", {
           method: "POST",
@@ -1171,7 +1281,7 @@ export default function Home() {
             action: "send",
             roomId: currentRoomId,
             member: currentMember,
-            message: demoFileMessage,
+            message: fileMessage,
           }),
         });
         const demoData = (await messageResponse.json()) as DemoRoomApiResponse;
@@ -1180,11 +1290,7 @@ export default function Home() {
         setRoomMembers(demoData.room.members);
         setMessages(demoData.room.messages);
         setFiles(demoData.room.files);
-        setRoomStatus(
-          fileSummary.source === "deepseek"
-            ? `文件摘要已生成，提取了 ${fileSummary.extractedTextLength} 个字符。`
-            : "文件已加入，当前使用摘要 fallback。",
-        );
+        setRoomStatus("文件卡片已发送到房间。需要总结时，请在文件卡片上点击“总结给我看”。");
       } catch (error) {
         console.error(error);
         setRoomStatus("公开测试房间文件消息保存失败，请稍后再试。");
@@ -1196,31 +1302,14 @@ export default function Home() {
 
     if (!isDbRoom || !currentRoomId || !sessionUserId) {
       setFiles((current) => [...current, file.name]);
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          senderId: currentMember.id,
-          kind: "file_summary",
-          originalLanguage: currentMember.language,
-          originalText: summaryTextForLanguage(summary, currentMember.language),
-          translations: translationsForSummary(summary, currentMember.language),
-          fileName: file.name,
-          createdAt: nowLabel(),
-        },
-      ]);
+      setMessages((current) => [...current, fileMessage]);
       setIsUploadingFile(false);
-      setRoomStatus(
-        fileSummary.source === "deepseek"
-          ? `文件摘要已生成，提取了 ${fileSummary.extractedTextLength} 个字符。`
-          : "文件已加入，当前使用摘要 fallback。",
-      );
+      setRoomStatus("文件卡片已发送。需要总结时，请在文件卡片上点击“总结给我看”。");
       return;
     }
 
     setRoomStatus("正在上传文件到 Supabase Storage...");
 
-    const attachmentId = crypto.randomUUID();
     const safeName = sanitizeStorageFileName(file.name);
     const filePath = `${currentRoomId}/${attachmentId}-${safeName}`;
 
@@ -1242,7 +1331,7 @@ export default function Home() {
       file_name: file.name,
       file_path: filePath,
       file_type: file.type || file.name.split(".").pop() || "file",
-      summary,
+      summary: {},
     });
 
     if (attachmentError) {
@@ -1252,12 +1341,12 @@ export default function Home() {
     }
 
     const { error: messageError } = await supabase.from("messages").insert({
-      id: crypto.randomUUID(),
+      id: fileMessage.id,
       room_id: currentRoomId,
       sender_id: sessionUserId,
       kind: "file_summary",
-      original_language: uploaderLanguage,
-      original_text: originalText,
+      original_language: fileMessage.originalLanguage,
+      original_text: fileMessage.originalText,
       translations,
       attachment_id: attachmentId,
     });
@@ -1271,11 +1360,7 @@ export default function Home() {
     setFiles((current) => [...current, file.name]);
     await loadMessages(currentRoomId);
     setIsUploadingFile(false);
-    setRoomStatus(
-      fileSummary.source === "deepseek"
-        ? `文件已上传，DeepSeek 已基于 ${fileSummary.extractedTextLength} 个字符生成摘要。`
-        : "文件已上传，当前使用摘要 fallback。",
-    );
+    setRoomStatus("文件卡片已上传到房间。需要总结时，请在文件卡片上点击“总结给我看”。");
   }
 
   if (stage === "auth") {
@@ -1442,6 +1527,18 @@ export default function Home() {
                     ) : null}
                     <p className="main-text">{mainText(message)}</p>
                     <p className="secondary-text">{secondaryText(message)}</p>
+                    {message.fileName && message.attachmentId ? (
+                      <div className="file-actions">
+                        <button onClick={() => previewUploadedFile(message)} type="button">
+                          <Eye size={15} />
+                          预览
+                        </button>
+                        <button onClick={() => summarizeUploadedFile(message)} type="button">
+                          <Sparkles size={15} />
+                          总结给我看
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </article>
               );
@@ -1488,6 +1585,41 @@ export default function Home() {
             </div>
           </section>
 
+          {filePreview ? (
+            <section className="private-ai-section">
+              <div className="side-title-row">
+                <p className="label">文件预览</p>
+                <button className="mini-action" onClick={() => setFilePreview(null)} type="button">
+                  关闭
+                </button>
+              </div>
+              <article className="private-ai-card">
+                <strong>{filePreview.fileName}</strong>
+                <p>{filePreview.text}</p>
+              </article>
+            </section>
+          ) : null}
+
+          {privateAiResults.length ? (
+            <section className="private-ai-section">
+              <p className="label">我的 AI 结果</p>
+              <div className="private-ai-list">
+                {privateAiResults.map((result) => (
+                  <article className="private-ai-card" key={result.id}>
+                    <div className="private-ai-head">
+                      <strong>{result.fileName ? `${result.title} · ${result.fileName}` : result.title}</strong>
+                      <small>{result.createdAt}</small>
+                    </div>
+                    <p>{summaryTextForLanguage(result.summary, activeViewer.language)}</p>
+                    <button className="mini-action share" onClick={() => sharePrivateAiResult(result)} type="button">
+                      <Send size={14} />
+                      分享到房间
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </aside>
       </section>
     </main>
