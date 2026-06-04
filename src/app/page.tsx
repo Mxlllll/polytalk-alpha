@@ -14,9 +14,9 @@ import {
   Users,
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { buildMockTranslations, supportedLanguages, type Language } from "@/lib/ai/mock";
+import { buildMockTranslations } from "@/lib/ai/mock";
 
-type UiLanguage = Exclude<Language, "mn">;
+type Language = "zh" | "ko" | "en";
 type Stage = "home" | "auth" | "lobby" | "room";
 type FileSummaryMode = "course" | "assignment";
 type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
@@ -134,7 +134,7 @@ type DemoRoomApiResponse = {
 const reactionOptions: {
   emoji: string;
   key: ReactionKey;
-  label: Record<UiLanguage, string>;
+  label: Record<Language, string>;
 }[] = [
   { key: "got_it", emoji: "✅", label: { zh: "收到", ko: "확인", en: "Got it" } },
   { key: "agree", emoji: "👍", label: { zh: "同意", ko: "동의", en: "Agree" } },
@@ -147,25 +147,18 @@ const languageLabels: Record<Language, string> = {
   zh: "中文",
   ko: "한국어",
   en: "English",
-  mn: "Монгол",
 };
-
-function uiLanguage(languageValue: Language): UiLanguage {
-  return languageValue === "mn" ? "en" : languageValue;
-}
 
 const fileSummaryModeTitles: Record<FileSummaryMode, Record<Language, string>> = {
   course: {
     zh: "课堂总结",
     ko: "수업 요약",
     en: "Class Summary",
-    mn: "Хичээлийн хураангуй",
   },
   assignment: {
     zh: "作业要求",
     ko: "과제 요구사항",
     en: "Assignment Brief",
-    mn: "Даалгаврын товч",
   },
 };
 
@@ -174,18 +167,16 @@ const fileActionLabels: Record<"preview" | "summarize", Record<Language, string>
     zh: "预览",
     ko: "미리보기",
     en: "Preview",
-    mn: "Урьдчилан харах",
   },
   summarize: {
     zh: "AI 总结",
     ko: "AI 요약",
     en: "AI Summary",
-    mn: "AI хураангуй",
   },
 };
 
 const uiCopy: Record<
-  UiLanguage,
+  Language,
   {
     schoolEmail: string;
     alphaPassword: string;
@@ -326,7 +317,7 @@ const uiCopy: Record<
 };
 
 const homeCopy: Record<
-  UiLanguage,
+  Language,
   {
     close: string;
     displayName: string;
@@ -383,7 +374,7 @@ const homeCopy: Record<
 };
 
 const roomChoiceCopy: Record<
-  UiLanguage,
+  Language,
   {
     back: string;
     create: string;
@@ -441,7 +432,6 @@ const sampleMembers: Member[] = [
   { id: "jiho", name: "Jiho", email: "jiho@yonsei.ac.kr", language: "ko" },
   { id: "seoah", name: "Seoah", email: "seoah@yonsei.ac.kr", language: "ko" },
   { id: "emma", name: "Emma", email: "emma@yonsei.ac.kr", language: "en" },
-  { id: "bold", name: "Bold", email: "bold@yonsei.ac.kr", language: "mn" },
 ];
 
 const initialMessages: Message[] = [
@@ -689,8 +679,8 @@ export default function Home() {
     members.find((member) => member.id === activeViewerId) ??
     (sessionUserId ? members.find((member) => member.id === sessionUserId) : undefined) ??
     members[0];
-  const copy = uiCopy[uiLanguage(stage === "room" ? activeViewer.language : language)];
-  const homeText = homeCopy[uiLanguage(language)];
+  const copy = uiCopy[stage === "room" ? activeViewer.language : language];
+  const homeText = homeCopy[language];
   const historyOwnerId = sessionUserId ?? demoUserId;
 
   const currentMember = useMemo<Member>(
@@ -1470,7 +1460,10 @@ export default function Home() {
       kind: result.kind,
       originalLanguage: "zh" as const,
       originalText: result.summary.zh,
-      translations: translationsForSummary(result.summary, "zh"),
+      translations: {
+        ko: result.summary.ko,
+        en: result.summary.en,
+      },
       fileName: result.fileName,
       createdAt: nowLabel(),
     };
@@ -1535,7 +1528,7 @@ export default function Home() {
   }
 
   function summaryTextForLanguage(summary: Record<Language, string>, summaryLanguage: Language) {
-    return summary[summaryLanguage] ?? summary.zh ?? summary.en ?? summary.ko ?? summary.mn;
+    return summary[summaryLanguage] ?? summary.zh ?? summary.en ?? summary.ko;
   }
 
   function translationsForSummary(summary: Record<Language, string>, originalLanguage: Language) {
@@ -1549,7 +1542,6 @@ export default function Home() {
       zh: `${fileName} 已上传。你可以先查看文件卡片，需要时再生成自己的 AI 总结。`,
       ko: `${fileName} 파일이 업로드되었습니다. 필요할 때 내 AI 요약을 생성할 수 있습니다.`,
       en: `${fileName} was uploaded. You can review the file card first and generate your own AI summary when needed.`,
-      mn: `${fileName} файл байршлаа. Та эхлээд файлын картыг үзээд хэрэгтэй үедээ өөрийн AI хураангуйг үүсгэж болно.`,
     };
 
     return {
@@ -1839,7 +1831,7 @@ export default function Home() {
             <div>
               <span className="field-label">{copy.myLanguage}</span>
               <div className="segmented">
-                {supportedLanguages.map((item) => (
+                {(["zh", "ko", "en"] as Language[]).map((item) => (
                   <button
                     className={language === item ? "active" : ""}
                     key={item}
@@ -1893,7 +1885,7 @@ export default function Home() {
               <div>
                 <span className="field-label">{homeText.primaryLanguage}</span>
                 <div className="segmented">
-                  {supportedLanguages.map((item) => (
+                  {(["zh", "ko", "en"] as Language[]).map((item) => (
                     <button
                       className={language === item ? "active" : ""}
                       key={item}
@@ -1964,7 +1956,7 @@ export default function Home() {
   }
 
   if (stage === "lobby") {
-    const roomChoice = roomChoiceCopy[uiLanguage(language)];
+    const roomChoice = roomChoiceCopy[language];
 
     return (
       <main className="center-shell">
@@ -2129,7 +2121,7 @@ export default function Home() {
                               disabled={isHistoryView}
                               key={reaction.key}
                               onClick={() => toggleMessageReaction(message.id, reaction.key)}
-                              title={reaction.label[uiLanguage(activeViewer.language)]}
+                              title={reaction.label[activeViewer.language]}
                               type="button"
                             >
                               <span>{reaction.emoji}</span>

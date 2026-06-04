@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildMockTranslations, Language, supportedLanguages } from "@/lib/ai/mock";
+import { buildMockTranslations, Language } from "@/lib/ai/mock";
 import { callAiJson, languageInstruction } from "@/lib/ai/provider";
 
 type TranslateRequest = {
@@ -12,11 +12,7 @@ type TranslateResponse = {
   source: "deepseek" | "mock";
 };
 
-const languages = supportedLanguages;
-
-function hasAllTargets(translations: Partial<Record<Language, string>>, targets: Language[]) {
-  return targets.every((language) => translations[language]?.trim());
-}
+const languages: Language[] = ["zh", "ko", "en"];
 
 export async function POST(request: Request) {
   const body = (await request.json()) as TranslateRequest;
@@ -36,31 +32,8 @@ export async function POST(request: Request) {
     });
 
     if (result?.data.translations) {
-      const translations = { ...result.data.translations };
-
-      if (!hasAllTargets(translations, targets)) {
-        const missingTargets = targets.filter((language) => !translations[language]?.trim());
-        const retry = await callAiJson<{ translations: Partial<Record<Language, string>> }>({
-          instructions:
-            "You are a translation engine for Korean university group work. Translate naturally, preserve academic politeness, and return only valid JSON. You must include every requested target language key.",
-          input: {
-            task: "Translate the message into the missing target languages.",
-            sourceLanguage: body.sourceLanguage,
-            targetLanguages: languageInstruction(missingTargets),
-            text: body.text,
-            expectedJsonShape: { translations: Object.fromEntries(missingTargets.map((language) => [language, "string"])) },
-          },
-        });
-
-        Object.assign(translations, retry?.data.translations);
-      }
-
-      if (!hasAllTargets(translations, targets)) {
-        throw new Error("AI translation response missed target language keys");
-      }
-
       return NextResponse.json({
-        translations,
+        translations: result.data.translations,
         source: result.source,
       } satisfies TranslateResponse);
     }

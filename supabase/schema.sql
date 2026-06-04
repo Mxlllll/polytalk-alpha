@@ -4,7 +4,7 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   display_name text not null,
   school_email text not null,
-  preferred_language text not null check (preferred_language in ('zh', 'ko', 'en', 'mn')),
+  preferred_language text not null check (preferred_language in ('zh', 'ko', 'en')),
   created_at timestamptz not null default now()
 );
 
@@ -29,7 +29,7 @@ create table if not exists public.messages (
   room_id uuid not null references public.rooms(id) on delete cascade,
   sender_id uuid not null references public.profiles(id) on delete cascade,
   kind text not null default 'text' check (kind in ('text', 'file_summary', 'discussion_summary')),
-  original_language text not null check (original_language in ('zh', 'ko', 'en', 'mn')),
+  original_language text not null check (original_language in ('zh', 'ko', 'en')),
   original_text text not null,
   translations jsonb not null default '{}'::jsonb,
   attachment_id uuid,
