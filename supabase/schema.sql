@@ -32,6 +32,7 @@ create table if not exists public.messages (
   original_language text not null check (original_language in ('zh', 'ko', 'en')),
   original_text text not null,
   translations jsonb not null default '{}'::jsonb,
+  reply_quote jsonb,
   attachment_id uuid,
   voice_url text,
   voice_duration integer,

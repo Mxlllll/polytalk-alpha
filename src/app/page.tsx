@@ -13,10 +13,12 @@ import {
   Pause,
   Play,
   Plus,
+  Reply,
   Send,
   Sparkles,
   Trash2,
   Users,
+  X,
 } from "lucide-react";
 import { createSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { buildMockTranslations } from "@/lib/ai/mock";
@@ -25,8 +27,6 @@ type Language = "zh" | "ko" | "en";
 type Stage = "home" | "auth" | "lobby" | "room";
 type AuthMode = "signIn" | "signUp" | "forgot" | "reset" | "change";
 type FileSummaryMode = "course" | "assignment";
-type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
-type MessageReactions = Partial<Record<ReactionKey, string[]>>;
 
 type RecorderState = "idle" | "recording" | "processing";
 type VoiceTranscriptSelection = {
@@ -57,6 +57,15 @@ type Member = {
   language: Language;
 };
 
+type MessageQuote = {
+  messageId: string;
+  senderId: string;
+  senderName: string;
+  originalLanguage: Language;
+  originalText: string;
+  translations: Partial<Record<Language, string>>;
+};
+
 type Message = {
   id: string;
   senderId: string;
@@ -72,7 +81,7 @@ type Message = {
   voiceDuration?: number;
   createdAt: string;
   isPending?: boolean;
-  reactions?: MessageReactions;
+  quote?: MessageQuote | null;
 };
 
 type DbMessageRow = {
@@ -85,6 +94,7 @@ type DbMessageRow = {
   attachment_id?: string | null;
   voice_url?: string | null;
   voice_duration?: number | null;
+  reply_quote?: MessageQuote | null;
   attachments?:
     | { file_name: string; file_path: string; file_type: string | null }
     | { file_name: string; file_path: string; file_type: string | null }[]
@@ -203,18 +213,6 @@ type DemoRoomRealtimeRow = {
 type DemoRoomSyncError = Error & {
   status?: number;
 };
-
-const reactionOptions: {
-  emoji: string;
-  key: ReactionKey;
-  label: Record<Language, string>;
-}[] = [
-  { key: "got_it", emoji: "OK", label: { zh: "收到", ko: "확인", en: "Got it" } },
-  { key: "agree", emoji: "+1", label: { zh: "同意", ko: "동의", en: "Agree" } },
-  { key: "question", emoji: "?", label: { zh: "有疑问", ko: "질문", en: "Question" } },
-  { key: "watching", emoji: "...", label: { zh: "在看", ko: "확인 중", en: "Watching" } },
-  { key: "thanks", emoji: "thx", label: { zh: "谢谢", ko: "고마워", en: "Thanks" } },
-];
 
 const languageLabels: Record<Language, string> = {
   zh: "中文",
@@ -381,6 +379,9 @@ const uiCopy: Record<
     noFiles: string;
     displayRule: string;
     original: string;
+    reply: string;
+    replyingTo: (name: string) => string;
+    cancelReply: string;
     seesFirst: (count: number, name: string, language: string) => string;
   }
 > = {
@@ -429,6 +430,9 @@ const uiCopy: Record<
     noFiles: "暂无文件",
     displayRule: "显示规则：大字永远是当前观看者母语，小字永远是发送者原文。",
     original: "原文",
+    reply: "回复",
+    replyingTo: (name) => `正在回复 ${name}`,
+    cancelReply: "取消回复",
     seesFirst: (count, name, languageName) => `${count} 位成员 · ${name} 优先看 ${languageName}`,
   },
   ko: {
@@ -476,6 +480,9 @@ const uiCopy: Record<
     noFiles: "파일 없음",
     displayRule: "표시 규칙: 큰 글자는 항상 보는 사람의 모국어, 작은 글자는 항상 보낸 사람의 원문입니다.",
     original: "원문",
+    reply: "답장",
+    replyingTo: (name) => `${name}님에게 답장 중`,
+    cancelReply: "답장 취소",
     seesFirst: (count, name, languageName) => `${count}명 · ${name}님은 ${languageName}을 먼저 봅니다`,
   },
   en: {
@@ -523,6 +530,9 @@ const uiCopy: Record<
     noFiles: "No files yet",
     displayRule: "Display rule: large text is always the viewer's native language; small text is always the sender's original text.",
     original: "Original",
+    reply: "Reply",
+    replyingTo: (name) => `Replying to ${name}`,
+    cancelReply: "Cancel reply",
     seesFirst: (count, name, languageName) => `${count} members · ${name} sees ${languageName} first`,
   },
 };
@@ -1045,6 +1055,7 @@ function messageFromDbRow(row: DbMessageRow): Message {
     fileType: attachment?.file_type,
     voiceUrl: row.voice_url ?? undefined,
     voiceDuration: row.voice_duration ?? undefined,
+    quote: row.reply_quote ?? null,
     createdAt: new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
   };
 }
@@ -1086,7 +1097,7 @@ function isSameMessage(left: Message, right: Message) {
     left.originalText === right.originalText &&
     left.isPending === right.isPending &&
     JSON.stringify(left.translations ?? {}) === JSON.stringify(right.translations ?? {}) &&
-    JSON.stringify(left.reactions ?? {}) === JSON.stringify(right.reactions ?? {})
+    JSON.stringify(left.quote ?? null) === JSON.stringify(right.quote ?? null)
   );
 }
 
@@ -1165,6 +1176,7 @@ export default function Home() {
   const [isHistoryView, setIsHistoryView] = useState(false);
   const [isSavingHistory, setIsSavingHistory] = useState(false);
   const [roomDialog, setRoomDialog] = useState<"create" | "join" | null>(null);
+  const [replyQuote, setReplyQuote] = useState<MessageQuote | null>(null);
   const [activeVoiceMenuId, setActiveVoiceMenuId] = useState<string | null>(null);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [voiceTranscriptSelection, setVoiceTranscriptSelection] = useState<VoiceTranscriptSelection | null>(null);
@@ -1340,20 +1352,31 @@ export default function Home() {
 
   const loadMessages = useCallback(
     async (roomId: string) => {
-      const { data, error } = await supabase
-        .from("messages")
-        .select(
-          "id, sender_id, kind, original_language, original_text, translations, attachment_id, voice_url, voice_duration, attachments(file_name, file_path, file_type), created_at",
-        )
-        .eq("room_id", roomId)
-        .order("created_at", { ascending: true });
+      const selectMessages = (includeQuote: boolean) =>
+        supabase
+          .from("messages")
+          .select(
+            includeQuote
+              ? "id, sender_id, kind, original_language, original_text, translations, attachment_id, voice_url, voice_duration, reply_quote, attachments(file_name, file_path, file_type), created_at"
+              : "id, sender_id, kind, original_language, original_text, translations, attachment_id, voice_url, voice_duration, attachments(file_name, file_path, file_type), created_at",
+          )
+          .eq("room_id", roomId)
+          .order("created_at", { ascending: true });
+
+      let { data, error } = await selectMessages(true);
+
+      if (error && /reply_quote|column/i.test(error.message)) {
+        const fallback = await selectMessages(false);
+        data = fallback.data;
+        error = fallback.error;
+      }
 
       if (error) {
         setRoomStatus(`读取消息失败：${error.message}`);
         return;
       }
 
-      setMessages(((data ?? []) as DbMessageRow[]).map(messageFromDbRow));
+      setMessages(((data ?? []) as unknown as DbMessageRow[]).map(messageFromDbRow));
     },
     [supabase],
   );
@@ -2419,68 +2442,43 @@ export default function Home() {
     return `${languageLabels[senderLanguage]} ${copy.original} · ${message.originalText}`;
   }
 
+  function quoteText(quote: MessageQuote) {
+    if (quote.originalLanguage === activeViewer.language) return quote.originalText;
+    return quote.translations[activeViewer.language] ?? quote.originalText;
+  }
+
+  function createQuote(message: Message, sender?: Member): MessageQuote {
+    return {
+      messageId: message.id,
+      senderId: message.senderId,
+      senderName: message.senderId === "ai" ? "AI" : sender?.name ?? "Unknown",
+      originalLanguage: message.originalLanguage,
+      originalText: message.originalText,
+      translations: message.translations,
+    };
+  }
+
+  function replyToMessage(message: Message, sender?: Member) {
+    if (isHistoryView || message.isPending) return;
+    setReplyQuote(createQuote(message, sender));
+  }
+
+  async function insertDbMessage(payload: Record<string, unknown>) {
+    const { error } = await supabase.from("messages").insert(payload);
+    if (error && "reply_quote" in payload && /reply_quote|column|schema cache/i.test(error.message)) {
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload.reply_quote;
+      return supabase.from("messages").insert(fallbackPayload);
+    }
+
+    return { error };
+  }
+
   function formatVoiceDuration(seconds?: number) {
     if (!seconds) return "0:00";
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = String(seconds % 60).padStart(2, "0");
     return `${minutes}:${remainingSeconds}`;
-  }
-
-  function toggleReactionLocally(messageId: string, reactionKey: ReactionKey, userId: string) {
-    setMessages((current) =>
-      current.map((message) => {
-        if (message.id !== messageId) return message;
-
-        const reactions = message.reactions ?? {};
-        const currentUsers = reactions[reactionKey] ?? [];
-        const nextUsers = currentUsers.includes(userId)
-          ? currentUsers.filter((id) => id !== userId)
-          : [...currentUsers, userId];
-
-        return {
-          ...message,
-          reactions: {
-            ...reactions,
-            [reactionKey]: nextUsers,
-          },
-        };
-      }),
-    );
-  }
-
-  async function toggleMessageReaction(messageId: string, reactionKey: ReactionKey) {
-    if (isHistoryView) return;
-
-    const reactor = isPublicDemoRoom ? currentMember : activeViewer;
-    toggleReactionLocally(messageId, reactionKey, reactor.id);
-
-    if (isPublicDemoRoom && currentRoomId) {
-      try {
-        const response = await fetch("/api/demo/rooms", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "react",
-            roomId: currentRoomId,
-            joinCode: roomCode,
-            member: currentMember,
-            messageId,
-            reactionKey,
-          }),
-        });
-        const data = (await response.json()) as DemoRoomApiResponse;
-        if (!response.ok || !data.room) throw new Error(data.error ?? "Demo reaction failed");
-      } catch (error) {
-        console.error(error);
-        toggleReactionLocally(messageId, reactionKey, reactor.id);
-        setRoomStatus("反应发送失败，请稍后再试。");
-      }
-      return;
-    }
-
-    if (isDbRoom) {
-      setRoomStatus("反应已在本机显示。正式多人同步会在下一步加入数据库保存。");
-    }
   }
 
   async function translateText(text: string, sourceLanguage: Language, options: { silent?: boolean } = {}) {
@@ -2710,7 +2708,7 @@ export default function Home() {
     }
 
     if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
-      const { error } = await supabase.from("messages").insert({
+      const { error } = await insertDbMessage({
         id: optimisticMessage.id,
         room_id: currentRoomId,
         sender_id: sessionUserId,
@@ -2720,6 +2718,7 @@ export default function Home() {
         translations: optimisticMessage.translations,
         voice_url: optimisticMessage.voiceUrl ?? null,
         voice_duration: optimisticMessage.voiceDuration ?? null,
+        reply_quote: optimisticMessage.quote ?? null,
       });
 
       if (error) {
@@ -2788,7 +2787,7 @@ export default function Home() {
     }
 
     if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
-      const { error } = await supabase.from("messages").insert({
+      const { error } = await insertDbMessage({
         id: voiceMessage.id,
         room_id: currentRoomId,
         sender_id: sessionUserId,
@@ -2823,6 +2822,7 @@ export default function Home() {
 
     const sender = isPublicDemoRoom ? currentMember : activeViewer;
     const firstPassTranslations = pendingTranslations(sender.language);
+    const quote = replyQuote;
     const optimisticMessage: Message = {
       id: crypto.randomUUID(),
       senderId: sender.id,
@@ -2832,9 +2832,11 @@ export default function Home() {
       translations: firstPassTranslations,
       createdAt: nowLabel(),
       isPending: true,
+      quote,
     };
 
     setMessageText("");
+    setReplyQuote(null);
     messageTextRef.current = "";
     broadcastTyping(false);
     setMessages((current) => [...current, optimisticMessage]);
@@ -3988,15 +3990,34 @@ export default function Home() {
               const isFileCard = Boolean(message.fileName && message.attachmentId);
               const isSummaryMessage = !isFileCard && (message.kind === "file_summary" || message.kind === "discussion_summary");
               const shouldShowSummaryOriginal = isSummaryMessage && message.originalLanguage !== activeViewer.language;
-              const reactorId = isPublicDemoRoom ? currentMember.id : activeViewer.id;
 
               return (
                 <article className={`message ${isMine ? "mine" : ""} ${isAi ? "ai" : ""} ${message.kind === "voice" ? "voice-message" : ""}`} key={message.id}>
-                  <p className="message-meta">
-                    {isAi ? "AI" : sender?.name} · {message.createdAt}
-                    {message.isPending ? ` · ${copy.translating}` : ""}
-                  </p>
+                  <div className="message-meta">
+                    <span>
+                      {isAi ? "AI" : sender?.name} · {message.createdAt}
+                      {message.isPending ? ` · ${copy.translating}` : ""}
+                    </span>
+                    {!isHistoryView && !message.isPending ? (
+                      <button
+                        aria-label={copy.reply}
+                        className="message-reply-button"
+                        onClick={() => replyToMessage(message, sender)}
+                        title={copy.reply}
+                        type="button"
+                      >
+                        <Reply size={13} />
+                        {copy.reply}
+                      </button>
+                    ) : null}
+                  </div>
                   <div className="bubble">
+                    {message.quote ? (
+                      <div className="quote-preview">
+                        <strong>{message.quote.senderName}</strong>
+                        <span>{quoteText(message.quote)}</span>
+                      </div>
+                    ) : null}
                     {message.fileName ? (
                       <div className="file-chip">
                         <FileText size={16} />
@@ -4115,28 +4136,6 @@ export default function Home() {
                         </button>
                       </div>
                     ) : null}
-                    {!message.isPending && message.kind !== "voice" ? (
-                      <div className="reaction-row" aria-label="Message reactions">
-                        {reactionOptions.map((reaction) => {
-                          const users = message.reactions?.[reaction.key] ?? [];
-                          const isActive = users.includes(reactorId);
-
-                          return (
-                            <button
-                              className={isActive ? "reaction-button active" : "reaction-button"}
-                              disabled={isHistoryView}
-                              key={reaction.key}
-                              onClick={() => toggleMessageReaction(message.id, reaction.key)}
-                              title={reaction.label[activeViewer.language]}
-                              type="button"
-                            >
-                              <span>{reaction.emoji}</span>
-                              {users.length ? <strong>{users.length}</strong> : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
                   </div>
                 </article>
               );
@@ -4151,6 +4150,18 @@ export default function Home() {
                 <p className="typing-indicator">
                   {typingIndicatorCopy[activeViewer.language](activeTypingMembers.map((member) => member.name))}
                 </p>
+              ) : null}
+              {replyQuote ? (
+                <div className="reply-composer-preview">
+                  <Reply size={15} />
+                  <div>
+                    <strong>{copy.replyingTo(replyQuote.senderName)}</strong>
+                    <span>{quoteText(replyQuote)}</span>
+                  </div>
+                  <button aria-label={copy.cancelReply} onClick={() => setReplyQuote(null)} title={copy.cancelReply} type="button">
+                    <X size={15} />
+                  </button>
+                </div>
               ) : null}
               <div className="composer-bar">
                 <label className={composerDisabled || isUploadingFile ? "file-button disabled" : "file-button"} title={copy.uploadFile}>

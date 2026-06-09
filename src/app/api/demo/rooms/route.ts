@@ -2,14 +2,21 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 type Language = "zh" | "ko" | "en";
-type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
-type MessageReactions = Partial<Record<ReactionKey, string[]>>;
 
 type DemoMember = {
   id: string;
   name: string;
   email: string;
   language: Language;
+};
+
+type MessageQuote = {
+  messageId: string;
+  senderId: string;
+  senderName: string;
+  originalLanguage: Language;
+  originalText: string;
+  translations: Partial<Record<Language, string>>;
 };
 
 type DemoMessage = {
@@ -27,7 +34,7 @@ type DemoMessage = {
   voiceDuration?: number;
   createdAt: string;
   isPending?: boolean;
-  reactions?: MessageReactions;
+  quote?: MessageQuote | null;
 };
 
 type DemoRoom = {
@@ -92,16 +99,6 @@ function upsertMember(room: DemoRoom, member: DemoMember) {
   }
 
   room.members.push(member);
-}
-
-function toggleReaction(message: DemoMessage, reactionKey: ReactionKey, userId: string) {
-  const currentReactions: MessageReactions = message.reactions ?? {};
-  const users = currentReactions[reactionKey] ?? [];
-  const nextUsers = users.includes(userId) ? users.filter((id) => id !== userId) : [...users, userId];
-  message.reactions = {
-    ...currentReactions,
-    [reactionKey]: nextUsers,
-  };
 }
 
 function serializeRoom(room: DemoRoom, options?: { memberCount?: number; messageCount?: number; fileCount?: number }) {
@@ -186,7 +183,7 @@ function findMemoryRoom(body: DemoRoomRequestBody) {
 }
 
 type DemoRoomRequestBody = {
-  action: "create" | "join" | "sync" | "send" | "updateMessage" | "addFile" | "react";
+  action: "create" | "join" | "sync" | "send" | "updateMessage" | "addFile";
   title?: string;
   joinCode?: string;
   roomId?: string;
@@ -194,7 +191,6 @@ type DemoRoomRequestBody = {
   message?: DemoMessage;
   messageId?: string;
   fileName?: string;
-  reactionKey?: ReactionKey;
   memberCount?: number;
   messageCount?: number;
   fileCount?: number;
@@ -284,14 +280,6 @@ export async function POST(request: Request) {
   if (body.action === "addFile" && body.fileName && !room.files.includes(body.fileName)) {
     room.files.push(body.fileName);
     room.updatedAt = Date.now();
-  }
-
-  if (body.action === "react" && body.messageId && body.reactionKey && body.member) {
-    const message = room.messages.find((item) => item.id === body.messageId);
-    if (message) {
-      toggleReaction(message, body.reactionKey, body.member.id);
-      room.updatedAt = Date.now();
-    }
   }
 
   rememberRoom(room);
