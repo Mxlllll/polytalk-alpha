@@ -3727,10 +3727,7 @@ export default function Home() {
 
               <button className="primary-action start-action" onClick={() => setStage("lobby")} type="button">
                 <Plus size={19} />
-                <span>
-                  {homeText.start}
-                  <small>{homeText.startSubtitle}</small>
-                </span>
+                <span>{homeText.start}</span>
               </button>
 
               <div className="home-secondary-actions">
@@ -3770,7 +3767,6 @@ export default function Home() {
               </div>
             </div>
 
-            {roomStatus ? <p className="status-text">{roomStatus}</p> : null}
           </section>
 
           {isHistoryOpen ? (

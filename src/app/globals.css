@@ -493,15 +493,8 @@ input:hover {
 }
 
 .start-action > span {
-  display: grid;
-  gap: 3px;
+  display: block;
   text-align: left;
-}
-
-.start-action small {
-  color: rgba(255, 255, 255, 0.74);
-  font-size: 12px;
-  font-weight: 760;
 }
 
 .home-secondary-actions {
@@ -1867,6 +1860,19 @@ input:hover {
 
   .home-panel {
     text-align: left;
+  }
+
+  .start-action {
+    justify-content: flex-start;
+    min-height: 78px;
+    padding: 0 26px;
+    font-size: 20px;
+    box-shadow: 0 22px 42px rgba(36, 34, 42, 0.2);
+  }
+
+  .start-action svg {
+    width: 24px;
+    height: 24px;
   }
 
   .brand-row {
