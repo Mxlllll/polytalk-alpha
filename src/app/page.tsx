@@ -522,6 +522,8 @@ const homeCopy: Record<
     historySubtitle: string;
     join: string;
     login: string;
+    logout: string;
+    accountLabel: string;
     primaryLanguage: string;
     start: string;
     startSubtitle: string;
@@ -536,6 +538,8 @@ const homeCopy: Record<
     historySubtitle: "查看之前保存的课堂讨论",
     join: "加入",
     login: "学校邮箱登录",
+    logout: "退出账户",
+    accountLabel: "当前账户",
     primaryLanguage: "我的母语",
     start: "开始讨论",
     startSubtitle: "下一步选择创建口令或输入口令加入",
@@ -549,6 +553,8 @@ const homeCopy: Record<
     historySubtitle: "저장된 수업 토론 보기",
     join: "참여",
     login: "학교 이메일 로그인",
+    logout: "로그아웃",
+    accountLabel: "현재 계정",
     primaryLanguage: "내 모국어",
     start: "토론 시작",
     startSubtitle: "다음 단계에서 코드를 만들거나 입력해 참여합니다",
@@ -562,6 +568,8 @@ const homeCopy: Record<
     historySubtitle: "Review saved class discussions",
     join: "Join",
     login: "School email login",
+    logout: "Sign out",
+    accountLabel: "Current account",
     primaryLanguage: "My primary language",
     start: "Start discussion",
     startSubtitle: "Next, create a code or enter one to join",
@@ -899,7 +907,7 @@ function shouldKeepLocalMessage(localMessage: Message, incomingMessage: Message)
 export default function Home() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const supabaseConfigured = useMemo(() => isSupabaseConfigured(), []);
-  const [stage, setStage] = useState<Stage>("home");
+  const [stage, setStage] = useState<Stage>("auth");
   const [email, setEmail] = useState("mina@yonsei.ac.kr");
   const [password, setPassword] = useState("polytalk123");
   const [displayName, setDisplayName] = useState("Mina");
@@ -1388,6 +1396,7 @@ export default function Home() {
           setDisplayName(localAccount.displayName);
           setLanguage(localAccount.language);
           setAuthStatus("演示账号已登录，可以继续使用。");
+          setStage("home");
         } else {
           setAuthStatus("当前未配置 Supabase，注册/登录将使用本机演示账号。");
         }
@@ -1418,6 +1427,7 @@ export default function Home() {
           setEmail(sessionEmail);
           await withTimeout(ensureProfile(data.session?.user.id ?? "", sessionEmail), 5000, "Profile sync");
           setAuthStatus("邮箱登录成功，可以直接开始讨论。");
+          setStage("home");
         }
       } catch (error) {
         console.error(error);
@@ -1619,6 +1629,29 @@ export default function Home() {
       setRoomStatus(statusText.createPublicFailed);
       return;
     }
+  }
+
+  async function signOutAccount() {
+    if (supabaseConfigured) {
+      await supabase.auth.signOut();
+    } else {
+      window.localStorage.removeItem("polytalk-alpha-local-session");
+    }
+
+    setSessionUserId(null);
+    setActiveViewerId(demoUserId);
+    setIsDbRoom(false);
+    setIsPublicDemoRoom(false);
+    setIsRoomConnectionLost(false);
+    setCurrentRoomId(null);
+    setRoomMembers(null);
+    setMessages(initialMessages);
+    setFiles([]);
+    setPrivateAiResults([]);
+    setFilePreview(null);
+    setStage("auth");
+    setAuthStatus("已退出账户。");
+    setRoomStatus("");
   }
 
   async function joinRoom() {
@@ -2919,13 +2952,25 @@ export default function Home() {
               </button>
 
               <div className="home-secondary-actions">
-                <button className="text-button" onClick={() => setStage("auth")} type="button">
-                  {homeText.login}
-                </button>
+                {sessionUserId ? (
+                  <div className="account-pill">
+                    <span>{homeText.accountLabel}</span>
+                    <strong>{email}</strong>
+                  </div>
+                ) : (
+                  <button className="text-button" onClick={() => setStage("auth")} type="button">
+                    {homeText.login}
+                  </button>
+                )}
                 <button className="text-button history-trigger" onClick={() => setIsHistoryOpen(true)} type="button">
                   <History size={16} />
                   {homeText.history}
                 </button>
+                {sessionUserId ? (
+                  <button className="text-button" onClick={signOutAccount} type="button">
+                    {homeText.logout}
+                  </button>
+                ) : null}
               </div>
             </div>
 
