@@ -1666,6 +1666,7 @@ export default function Home() {
           body: JSON.stringify({
             action: "react",
             roomId: currentRoomId,
+            joinCode: roomCode,
             member: currentMember,
             messageId,
             reactionKey,
@@ -1799,6 +1800,7 @@ export default function Home() {
           body: JSON.stringify({
             action: "send",
             roomId: currentRoomId,
+            joinCode: roomCode,
             member: currentMember,
             message: optimisticMessage,
           }),
@@ -1826,6 +1828,7 @@ export default function Home() {
               body: JSON.stringify({
                 action: "updateMessage",
                 roomId: currentRoomId,
+                joinCode: roomCode,
                 member: currentMember,
                 message: translatedMessage,
               }),
@@ -1896,6 +1899,7 @@ export default function Home() {
           body: JSON.stringify({
             action: "send",
             roomId: currentRoomId,
+            joinCode: roomCode,
             member: currentMember,
             message: voiceMessage,
           }),
@@ -2102,6 +2106,7 @@ export default function Home() {
           body: JSON.stringify({
             action: "updateMessage",
             roomId: currentRoomId,
+            joinCode: roomCode,
             member: currentMember,
             message: updatedMessage,
           }),
@@ -2262,6 +2267,7 @@ export default function Home() {
           body: JSON.stringify({
             action: "send",
             roomId: currentRoomId,
+            joinCode: roomCode,
             member: currentMember,
             message: summaryMessage,
           }),
@@ -2472,6 +2478,7 @@ export default function Home() {
           body: JSON.stringify({
             action: "addFile",
             roomId: currentRoomId,
+            joinCode: roomCode,
             member: currentMember,
             fileName: file.name,
           }),
@@ -2484,6 +2491,7 @@ export default function Home() {
           body: JSON.stringify({
             action: "send",
             roomId: currentRoomId,
+            joinCode: roomCode,
             member: currentMember,
             message: fileMessage,
           }),
