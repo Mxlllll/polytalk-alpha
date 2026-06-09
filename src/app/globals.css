@@ -1169,6 +1169,16 @@ input:hover {
     transparent;
 }
 
+.typing-indicator {
+  width: min(840px, 100%);
+  margin: 0 auto 8px;
+  padding: 0 12px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
 .composer-bar {
   width: min(840px, 100%);
   min-height: 56px;

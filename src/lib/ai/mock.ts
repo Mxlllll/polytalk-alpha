@@ -8,23 +8,23 @@ export const languageNames: Record<Language, string> = {
 
 export const mockTranslations: Record<Language, Partial<Record<Language, string>>> = {
   zh: {
-    ko: "저는 이 부분을 맡을 수 있어요. 다만 교수님 요구사항을 한 번 더 확인하고 싶어요.",
-    en: "I can take this part, but I would like to confirm the professor's requirements once more.",
+    ko: "번역을 준비 중입니다. 원문을 함께 확인해 주세요.",
+    en: "Translation is being prepared. Please check the original text for now.",
   },
   ko: {
-    zh: "我可以负责这一部分，不过想再确认一下教授的要求。",
-    en: "I can take this part, but I would like to confirm the professor's requirements once more.",
+    zh: "正在准备翻译，请先结合原文查看。",
+    en: "Translation is being prepared. Please check the original text for now.",
   },
   en: {
-    zh: "我可以负责这一部分，不过想再确认一下教授的要求。",
-    ko: "저는 이 부분을 맡을 수 있어요. 다만 교수님 요구사항을 한 번 더 확인하고 싶어요.",
+    zh: "正在准备翻译，请先结合原文查看。",
+    ko: "번역을 준비 중입니다. 원문을 함께 확인해 주세요.",
   },
 };
 
 export const mockDiscussionSummary: Record<Language, string> = {
-  zh: "【1. 本次讨论结论】\n- 先确认发表顺序、资料整理分工和教授要求的引用格式。\n\n【2. 分工与负责人】\n- 案例整理：待确认负责人\n- 理论框架：待确认负责人\n- introduction 和结论：待确认负责人\n- 引用格式检查：待确认负责人\n\n【3. 教授/作业要求】\n- 已提到：需要确认教授要求的引用格式。\n- 未确认：评分标准、提交格式、是否需要韩文/英文摘要。\n\n【4. 还没解决的问题】\n- 评分标准是什么？\n- 最终提交格式是什么？\n- 是否需要韩文或英文摘要？\n\n【5. 下一步行动】\n- 上传教授公告或作业要求文件。\n- 提取文件中的具体要求。\n- 确认每个人负责的部分。\n- 确认发表顺序和引用格式。",
-  ko: "【1. 이번 논의 결론】\n- 발표 순서, 자료 정리 역할, 교수님이 요구한 인용 형식을 먼저 확인해야 합니다.\n\n【2. 역할과 담당자】\n- 사례 정리: 담당자 확인 필요\n- 이론 프레임 정리: 담당자 확인 필요\n- introduction 및 결론: 담당자 확인 필요\n- 인용 형식 점검: 담당자 확인 필요\n\n【3. 교수님/과제 요구사항】\n- 확인된 내용: 교수님이 요구한 인용 형식을 확인해야 합니다.\n- 미확인: 평가 기준, 제출 형식, 한국어/영어 요약 필요 여부.\n\n【4. 아직 해결되지 않은 질문】\n- 평가 기준은 무엇인가요?\n- 최종 제출 형식은 무엇인가요?\n- 한국어 또는 영어 요약이 필요한가요?\n\n【5. 다음 행동】\n- 교수님 공지나 과제 요구 파일을 업로드합니다.\n- 파일에서 구체 요구사항을 추출합니다.\n- 각자 맡을 부분을 확정합니다.\n- 발표 순서와 인용 형식을 확인합니다.",
-  en: "【1. Discussion Decisions】\n- The group should first confirm presentation order, material roles, and the professor's required citation format.\n\n【2. Tasks And Owners】\n- Case examples: owner not confirmed\n- Theory framework: owner not confirmed\n- Introduction and conclusion: owner not confirmed\n- Citation-format check: owner not confirmed\n\n【3. Professor / Assignment Requirements】\n- Mentioned: the professor's required citation format needs to be confirmed.\n- Not confirmed: grading criteria, submission format, and whether a Korean/English abstract is required.\n\n【4. Unresolved Questions】\n- What are the grading criteria?\n- What is the final submission format?\n- Is a Korean or English abstract required?\n\n【5. Next Actions】\n- Upload the professor's notice or assignment file.\n- Extract concrete requirements from the file.\n- Confirm each person's responsibility.\n- Confirm presentation order and citation format.",
+  zh: "【1. 讨论主题】\n小组正在确认课程讨论或作业展示的分工。\n\n【2. 核心问题】\n需要明确谁负责哪一部分，以及教授的具体要求。\n\n【3. 关键概念】\n- 分工：每个人负责一个明确部分。\n- 要求确认：先核对评分标准和提交格式。\n- 引用格式：统一资料来源的写法。\n\n【4. 讲解逻辑】\n1. 先确认任务目标。\n2. 再拆分每个人的负责内容。\n3. 检查教授要求和引用格式。\n4. 最后决定下一步行动。\n\n【5. 最终结论】\n下一步应先确认作业要求，再确定每个人的具体分工。\n\n【6. 一个例子】\n例如一个人负责案例，一个人负责理论，一个人负责整理 PPT。",
+  ko: "【1. 토론 주제】\n조별 토론 또는 과제 발표의 역할을 정리하는 내용입니다.\n\n【2. 핵심 문제】\n누가 어떤 부분을 맡을지, 교수님의 요구사항이 무엇인지 확인해야 합니다.\n\n【3. 핵심 개념】\n- 역할 분담: 각자 맡을 부분을 명확히 정합니다.\n- 요구사항 확인: 평가 기준과 제출 형식을 먼저 확인합니다.\n- 인용 형식: 자료 출처 표기를 통일합니다.\n\n【4. 설명 흐름】\n1. 과제 목표를 확인합니다.\n2. 각자의 역할을 나눕니다.\n3. 교수님의 요구사항과 인용 형식을 확인합니다.\n4. 다음 행동을 정합니다.\n\n【5. 최종 결론】\n먼저 과제 요구사항을 확인한 뒤 구체적인 역할을 정해야 합니다.\n\n【6. 예시】\n예를 들어 한 명은 사례, 한 명은 이론, 한 명은 PPT 정리를 맡을 수 있습니다.",
+  en: "【1. Discussion Topic】\nThe group is clarifying roles for a class discussion or assignment presentation.\n\n【2. Core Question】\nThe group needs to decide who owns each part and confirm the professor's requirements.\n\n【3. Key Concepts】\n- Role split: each person owns a clear part.\n- Requirement check: confirm grading criteria and submission format first.\n- Citation format: keep source formatting consistent.\n\n【4. Discussion Logic】\n1. Confirm the task goal.\n2. Split responsibilities.\n3. Check professor requirements and citation format.\n4. Decide the next actions.\n\n【5. Final Takeaway】\nThe group should confirm the assignment requirements before finalizing responsibilities.\n\n【6. Example】\nFor example, one student handles cases, one handles theory, and one organizes the slides.",
 };
 
 export function buildMockTranslations(sourceLanguage: Language) {

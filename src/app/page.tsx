@@ -32,6 +32,29 @@ type VoiceTranscriptSelection = {
   language: Language;
 };
 
+type PreTranslation = {
+  text: string;
+  sourceLanguage: Language;
+  translations: Partial<Record<Language, string>>;
+  status: "loading" | "ready" | "error";
+};
+
+type TypingMember = {
+  id: string;
+  name: string;
+  language: Language;
+  updatedAt: number;
+};
+
+type TypingBroadcastPayload = {
+  member: TypingMember;
+  isTyping: boolean;
+};
+
+type TypingChannel = {
+  send: (payload: { type: "broadcast"; event: "typing"; payload: TypingBroadcastPayload }) => Promise<unknown>;
+};
+
 type Member = {
   id: string;
   name: string;
@@ -177,6 +200,27 @@ const languageLabels: Record<Language, string> = {
   ko: "한국어",
   en: "English",
 };
+
+const supportedLanguages: Language[] = ["zh", "ko", "en"];
+
+const translationPlaceholders: Record<Language, string> = {
+  zh: "正在翻译...",
+  ko: "번역 중...",
+  en: "Translating...",
+};
+
+const typingIndicatorCopy: Record<Language, (names: string[]) => string> = {
+  zh: (names) => `${names.join("、")} 正在输入...`,
+  ko: (names) => `${names.join(", ")}님이 입력 중...`,
+  en: (names) => `${names.join(", ")} ${names.length > 1 ? "are" : "is"} typing...`,
+};
+
+function pendingTranslations(sourceLanguage: Language): Partial<Record<Language, string>> {
+  return supportedLanguages.reduce<Partial<Record<Language, string>>>((accumulator, item) => {
+    if (item !== sourceLanguage) accumulator[item] = translationPlaceholders[item];
+    return accumulator;
+  }, {});
+}
 
 const fileSummaryModeTitles: Record<FileSummaryMode, Record<Language, string>> = {
   course: {
@@ -830,6 +874,29 @@ function isSameMessage(left: Message, right: Message) {
   );
 }
 
+function shouldKeepLocalMessage(localMessage: Message, incomingMessage: Message) {
+  const localHasRealTranslation = supportedLanguages.some(
+    (item) =>
+      item !== localMessage.originalLanguage &&
+      Boolean(localMessage.translations[item]) &&
+      localMessage.translations[item] !== translationPlaceholders[item],
+  );
+  const incomingHasRealTranslation = supportedLanguages.some(
+    (item) =>
+      item !== incomingMessage.originalLanguage &&
+      Boolean(incomingMessage.translations[item]) &&
+      incomingMessage.translations[item] !== translationPlaceholders[item],
+  );
+
+  return Boolean(localMessage.isPending) === false && localHasRealTranslation && !incomingHasRealTranslation;
+}
+
+function hasReadyTranslations(translations: Partial<Record<Language, string>>, sourceLanguage: Language) {
+  return supportedLanguages.some(
+    (item) => item !== sourceLanguage && Boolean(translations[item]) && translations[item] !== translationPlaceholders[item],
+  );
+}
+
 export default function Home() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const supabaseConfigured = useMemo(() => isSupabaseConfigured(), []);
@@ -882,8 +949,16 @@ export default function Home() {
   const [activeVoiceMenuId, setActiveVoiceMenuId] = useState<string | null>(null);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [voiceTranscriptSelection, setVoiceTranscriptSelection] = useState<VoiceTranscriptSelection | null>(null);
+  const [preTranslation, setPreTranslation] = useState<PreTranslation | null>(null);
+  const [typingMembers, setTypingMembers] = useState<Record<string, TypingMember>>({});
   const memberCountRef = useRef(0);
   const demoSyncInFlightRef = useRef(false);
+  const preTranslateTimerRef = useRef<number | null>(null);
+  const preTranslateRequestIdRef = useRef(0);
+  const typingChannelRef = useRef<TypingChannel | null>(null);
+  const typingStateRef = useRef(false);
+  const typingStopTimerRef = useRef<number | null>(null);
+  const messageTextRef = useRef("");
 
   function updateRecorderState(nextState: RecorderState) {
     recorderStateRef.current = nextState;
@@ -921,6 +996,12 @@ export default function Home() {
     [demoUserId, displayName, email, language, sessionUserId],
   );
 
+  const activeTypingMembers = useMemo(
+    () =>
+      Object.values(typingMembers).filter((member) => member.id !== currentMember.id),
+    [currentMember.id, typingMembers],
+  );
+
   useEffect(() => {
     messageCountRef.current = messages.length;
   }, [messages.length]);
@@ -936,6 +1017,8 @@ export default function Home() {
   useEffect(() => {
     return () => {
       if (recordingTimerRef.current) window.clearInterval(recordingTimerRef.current);
+      if (preTranslateTimerRef.current) window.clearTimeout(preTranslateTimerRef.current);
+      if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
       mediaRecorderRef.current?.stop();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
@@ -978,6 +1061,7 @@ export default function Home() {
         const replacedMessages = current.map((message) => {
           const incomingMessage = incomingById.get(message.id);
           if (!incomingMessage || isSameMessage(message, incomingMessage)) return message;
+          if (shouldKeepLocalMessage(message, incomingMessage)) return message;
           didReplace = true;
           return incomingMessage;
         });
@@ -1216,6 +1300,58 @@ export default function Home() {
       supabase.removeChannel(channel);
     };
   }, [currentRoomId, isPublicDemoRoom, mergeRealtimeDemoRoom, supabase, supabaseConfigured]);
+
+  useEffect(() => {
+    if (!isPublicDemoRoom || !currentRoomId || !supabaseConfigured) return;
+
+    const channel = supabase
+      .channel(`demo-room-typing-${currentRoomId}`, {
+        config: {
+          broadcast: {
+            self: false,
+          },
+        },
+      })
+      .on("broadcast", { event: "typing" }, (event) => {
+        const payload = event.payload as TypingBroadcastPayload;
+        if (!payload?.member || payload.member.id === currentMember.id) return;
+
+        setTypingMembers((current) => {
+          const next = { ...current };
+          if (payload.isTyping) {
+            next[payload.member.id] = { ...payload.member, updatedAt: Date.now() };
+          } else {
+            delete next[payload.member.id];
+          }
+          return next;
+        });
+      })
+      .subscribe();
+
+    typingChannelRef.current = channel as unknown as TypingChannel;
+
+    return () => {
+      typingChannelRef.current = null;
+      setTypingMembers({});
+      supabase.removeChannel(channel);
+    };
+  }, [currentMember.id, currentRoomId, isPublicDemoRoom, supabase, supabaseConfigured]);
+
+  useEffect(() => {
+    if (activeTypingMembers.length === 0) return;
+
+    const timer = window.setInterval(() => {
+      setTypingMembers((current) => {
+        const now = Date.now();
+        const next = Object.fromEntries(
+          Object.entries(current).filter(([, member]) => now - member.updatedAt < 3500),
+        ) as Record<string, TypingMember>;
+        return Object.keys(next).length === Object.keys(current).length ? current : next;
+      });
+    }, 1200);
+
+    return () => window.clearInterval(timer);
+  }, [activeTypingMembers.length]);
 
   useEffect(() => {
     async function initializeSession() {
@@ -1563,7 +1699,7 @@ export default function Home() {
 
   function mainText(message: Message) {
     if (message.originalLanguage === activeViewer.language) return message.originalText;
-    return message.translations[activeViewer.language] ?? message.originalText;
+    return message.translations[activeViewer.language] ?? translationPlaceholders[activeViewer.language];
   }
 
   function secondaryText(message: Message) {
@@ -1636,7 +1772,7 @@ export default function Home() {
     }
   }
 
-  async function translateText(text: string, sourceLanguage: Language) {
+  async function translateText(text: string, sourceLanguage: Language, options: { silent?: boolean } = {}) {
     try {
       const response = await fetch("/api/ai/translate", {
         method: "POST",
@@ -1653,13 +1789,108 @@ export default function Home() {
         source: "deepseek" | "mock";
       };
 
-      setRoomStatus(data.source === "deepseek" ? "DeepSeek 翻译已生成。" : "AI 不可用，当前使用 mock 翻译。");
+      if (!options.silent) {
+        setRoomStatus(data.source === "deepseek" ? "DeepSeek 翻译已生成。" : "AI 不可用，当前使用 mock 翻译。");
+      }
       return data.translations;
     } catch (error) {
       console.error(error);
-      setRoomStatus("AI 翻译失败，当前使用 mock 翻译。");
+      if (!options.silent) {
+        setRoomStatus("AI 翻译失败，当前使用 mock 翻译。");
+      }
       return buildMockTranslations(sourceLanguage);
     }
+  }
+
+  function broadcastTyping(isTyping: boolean) {
+    if (typingStateRef.current === isTyping && isTyping) return;
+    typingStateRef.current = isTyping;
+    void typingChannelRef.current?.send({
+      type: "broadcast",
+      event: "typing",
+      payload: {
+        isTyping,
+        member: {
+          id: currentMember.id,
+          name: currentMember.name,
+          language: currentMember.language,
+          updatedAt: Date.now(),
+        },
+      },
+    });
+  }
+
+  function stopTypingSoon() {
+    if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+    typingStopTimerRef.current = window.setTimeout(() => {
+      broadcastTyping(false);
+    }, 1400);
+  }
+
+  function clearPreTranslateTimer() {
+    if (preTranslateTimerRef.current) {
+      window.clearTimeout(preTranslateTimerRef.current);
+      preTranslateTimerRef.current = null;
+    }
+  }
+
+  function schedulePreTranslation(nextText: string, sender: Member) {
+    clearPreTranslateTimer();
+    const trimmedText = nextText.trim();
+    preTranslateRequestIdRef.current += 1;
+    const requestId = preTranslateRequestIdRef.current;
+
+    if (trimmedText.length < 2) {
+      setPreTranslation(null);
+      return;
+    }
+
+    setPreTranslation({
+      text: trimmedText,
+      sourceLanguage: sender.language,
+      translations: pendingTranslations(sender.language),
+      status: "loading",
+    });
+
+    preTranslateTimerRef.current = window.setTimeout(() => {
+      void translateText(trimmedText, sender.language, { silent: true })
+        .then((translations) => {
+          if (requestId !== preTranslateRequestIdRef.current) return;
+          if (messageTextRef.current.trim() !== trimmedText) return;
+          setPreTranslation({
+            text: trimmedText,
+            sourceLanguage: sender.language,
+            translations,
+            status: "ready",
+          });
+        })
+        .catch(() => {
+          if (requestId !== preTranslateRequestIdRef.current) return;
+          setPreTranslation({
+            text: trimmedText,
+            sourceLanguage: sender.language,
+            translations: pendingTranslations(sender.language),
+            status: "error",
+          });
+        });
+    }, 650);
+  }
+
+  function handleMessageTextChange(nextText: string) {
+    const sender = isPublicDemoRoom ? currentMember : activeViewer;
+    messageTextRef.current = nextText;
+    setMessageText(nextText);
+
+    if (!nextText.trim() || stage !== "room" || isHistoryView) {
+      clearPreTranslateTimer();
+      setPreTranslation(null);
+      broadcastTyping(false);
+      return;
+    }
+
+    broadcastTyping(true);
+    stopTypingSoon();
+    schedulePreTranslation(nextText, sender);
   }
 
   function stopRecordingTimer() {
@@ -1762,6 +1993,13 @@ export default function Home() {
           return null;
         });
 
+      if (hasReadyTranslations(optimisticMessage.translations, sender.language)) {
+        void saveMessage.then((room) => {
+          if (room) setRoomStatus("消息已发送。");
+        });
+        return;
+      }
+
       void translateText(textForTranslation, sender.language)
         .then(async (translations) => {
           const translatedMessage: Message = {
@@ -1797,6 +2035,30 @@ export default function Home() {
           setRoomStatus("消息已发送，但翻译生成失败。");
         });
 
+      return;
+    }
+
+    if (hasReadyTranslations(optimisticMessage.translations, sender.language)) {
+      if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
+        const { error } = await supabase.from("messages").insert({
+          id: optimisticMessage.id,
+          room_id: currentRoomId,
+          sender_id: sessionUserId,
+          kind: optimisticMessage.kind,
+          original_language: optimisticMessage.originalLanguage,
+          original_text: optimisticMessage.originalText,
+          translations: optimisticMessage.translations,
+          voice_url: optimisticMessage.voiceUrl ?? null,
+          voice_duration: optimisticMessage.voiceDuration ?? null,
+        });
+
+        if (error) {
+          setRoomStatus(`消息已显示在本地，但数据库保存失败：${error.message}`);
+          return;
+        }
+      }
+
+      setRoomStatus("消息已发送。");
       return;
     }
 
@@ -1896,18 +2158,31 @@ export default function Home() {
     if (!text || recorderStateRef.current !== "idle") return;
 
     const sender = isPublicDemoRoom ? currentMember : activeViewer;
+    const readyPreTranslation =
+      preTranslation?.status === "ready" &&
+      preTranslation.text === text &&
+      preTranslation.sourceLanguage === sender.language
+        ? preTranslation.translations
+        : null;
+    const firstPassTranslations = readyPreTranslation ?? pendingTranslations(sender.language);
+    const hasPreparedTranslation = hasReadyTranslations(firstPassTranslations, sender.language);
     const optimisticMessage: Message = {
       id: crypto.randomUUID(),
       senderId: sender.id,
       kind: "text",
       originalLanguage: sender.language,
       originalText: text,
-      translations: {},
+      translations: firstPassTranslations,
       createdAt: nowLabel(),
-      isPending: true,
+      isPending: !hasPreparedTranslation,
     };
 
     setMessageText("");
+    messageTextRef.current = "";
+    setPreTranslation(null);
+    clearPreTranslateTimer();
+    preTranslateRequestIdRef.current += 1;
+    broadcastTyping(false);
     setMessages((current) => [...current, optimisticMessage]);
     void publishMessage(optimisticMessage, text, sender);
   }
@@ -2973,6 +3248,11 @@ export default function Home() {
             <div className="history-readonly">这是已保存的历史记录，完整聊天保留为只读。</div>
           ) : (
             <form className="composer" onSubmit={sendMessage}>
+              {activeTypingMembers.length ? (
+                <p className="typing-indicator">
+                  {typingIndicatorCopy[activeViewer.language](activeTypingMembers.map((member) => member.name))}
+                </p>
+              ) : null}
               <div className="composer-bar">
                 <label className="file-button" title={copy.uploadFile}>
                   {isUploadingFile ? <Loader2 className="spin" size={18} /> : <Plus size={20} />}
@@ -2986,7 +3266,7 @@ export default function Home() {
                 <input
                   placeholder={copy.messagePlaceholder(activeViewer.name)}
                   value={messageText}
-                  onChange={(event) => setMessageText(event.target.value)}
+                  onChange={(event) => handleMessageTextChange(event.target.value)}
                 />
                 <button
                   aria-label={copy.voiceTitle}
