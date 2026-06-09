@@ -32,13 +32,6 @@ type VoiceTranscriptSelection = {
   language: Language;
 };
 
-type PreTranslation = {
-  text: string;
-  sourceLanguage: Language;
-  translations: Partial<Record<Language, string>>;
-  status: "loading" | "ready" | "error";
-};
-
 type TypingMember = {
   id: string;
   name: string;
@@ -895,12 +888,6 @@ function shouldKeepLocalMessage(localMessage: Message, incomingMessage: Message)
   return Boolean(localMessage.isPending) === false && localHasRealTranslation && !incomingHasRealTranslation;
 }
 
-function hasReadyTranslations(translations: Partial<Record<Language, string>>, sourceLanguage: Language) {
-  return supportedLanguages.some(
-    (item) => item !== sourceLanguage && Boolean(translations[item]) && translations[item] !== translationPlaceholders[item],
-  );
-}
-
 export default function Home() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const supabaseConfigured = useMemo(() => isSupabaseConfigured(), []);
@@ -953,17 +940,15 @@ export default function Home() {
   const [activeVoiceMenuId, setActiveVoiceMenuId] = useState<string | null>(null);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [voiceTranscriptSelection, setVoiceTranscriptSelection] = useState<VoiceTranscriptSelection | null>(null);
-  const [preTranslation, setPreTranslation] = useState<PreTranslation | null>(null);
   const [typingMembers, setTypingMembers] = useState<Record<string, TypingMember>>({});
   const memberCountRef = useRef(0);
   const demoSyncInFlightRef = useRef(false);
   const demoSyncFailureCountRef = useRef(0);
-  const preTranslateTimerRef = useRef<number | null>(null);
-  const preTranslateRequestIdRef = useRef(0);
   const typingChannelRef = useRef<TypingChannel | null>(null);
   const typingStateRef = useRef(false);
   const typingStopTimerRef = useRef<number | null>(null);
   const messageTextRef = useRef("");
+  const translationQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   function updateRecorderState(nextState: RecorderState) {
     recorderStateRef.current = nextState;
@@ -1022,7 +1007,6 @@ export default function Home() {
   useEffect(() => {
     return () => {
       if (recordingTimerRef.current) window.clearInterval(recordingTimerRef.current);
-      if (preTranslateTimerRef.current) window.clearTimeout(preTranslateTimerRef.current);
       if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
       mediaRecorderRef.current?.stop();
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -1786,6 +1770,9 @@ export default function Home() {
   }
 
   async function translateText(text: string, sourceLanguage: Language, options: { silent?: boolean } = {}) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12000);
+
     try {
       const response = await fetch("/api/ai/translate", {
         method: "POST",
@@ -1793,6 +1780,7 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ text, sourceLanguage }),
+        signal: controller.signal,
       });
 
       if (!response.ok) throw new Error("Translation request failed");
@@ -1812,7 +1800,15 @@ export default function Home() {
         setRoomStatus("AI 翻译失败，当前使用 mock 翻译。");
       }
       return buildMockTranslations(sourceLanguage);
+    } finally {
+      window.clearTimeout(timeout);
     }
+  }
+
+  function enqueueTranslation(work: () => Promise<void>) {
+    const nextWork = translationQueueRef.current.catch(() => undefined).then(work);
+    translationQueueRef.current = nextWork.catch(() => undefined);
+    void nextWork;
   }
 
   function broadcastTyping(isTyping: boolean) {
@@ -1840,70 +1836,17 @@ export default function Home() {
     }, 1400);
   }
 
-  function clearPreTranslateTimer() {
-    if (preTranslateTimerRef.current) {
-      window.clearTimeout(preTranslateTimerRef.current);
-      preTranslateTimerRef.current = null;
-    }
-  }
-
-  function schedulePreTranslation(nextText: string, sender: Member) {
-    clearPreTranslateTimer();
-    const trimmedText = nextText.trim();
-    preTranslateRequestIdRef.current += 1;
-    const requestId = preTranslateRequestIdRef.current;
-
-    if (trimmedText.length < 2) {
-      setPreTranslation(null);
-      return;
-    }
-
-    setPreTranslation({
-      text: trimmedText,
-      sourceLanguage: sender.language,
-      translations: pendingTranslations(sender.language),
-      status: "loading",
-    });
-
-    preTranslateTimerRef.current = window.setTimeout(() => {
-      void translateText(trimmedText, sender.language, { silent: true })
-        .then((translations) => {
-          if (requestId !== preTranslateRequestIdRef.current) return;
-          if (messageTextRef.current.trim() !== trimmedText) return;
-          setPreTranslation({
-            text: trimmedText,
-            sourceLanguage: sender.language,
-            translations,
-            status: "ready",
-          });
-        })
-        .catch(() => {
-          if (requestId !== preTranslateRequestIdRef.current) return;
-          setPreTranslation({
-            text: trimmedText,
-            sourceLanguage: sender.language,
-            translations: pendingTranslations(sender.language),
-            status: "error",
-          });
-        });
-    }, 650);
-  }
-
   function handleMessageTextChange(nextText: string) {
-    const sender = isPublicDemoRoom ? currentMember : activeViewer;
     messageTextRef.current = nextText;
     setMessageText(nextText);
 
     if (!nextText.trim() || stage !== "room" || isHistoryView) {
-      clearPreTranslateTimer();
-      setPreTranslation(null);
       broadcastTyping(false);
       return;
     }
 
     broadcastTyping(true);
     stopTypingSoon();
-    schedulePreTranslation(nextText, sender);
   }
 
   function stopRecordingTimer() {
@@ -2006,15 +1949,9 @@ export default function Home() {
           return null;
         });
 
-      if (hasReadyTranslations(optimisticMessage.translations, sender.language)) {
-        void saveMessage.then((room) => {
-          if (room) setRoomStatus("消息已发送。");
-        });
-        return;
-      }
-
-      void translateText(textForTranslation, sender.language)
-        .then(async (translations) => {
+      enqueueTranslation(async () => {
+        try {
+          const translations = await translateText(textForTranslation, sender.language, { silent: true });
           const translatedMessage: Message = {
             ...optimisticMessage,
             translations,
@@ -2026,19 +1963,20 @@ export default function Home() {
           );
 
           await saveMessage;
-          await fetch("/api/demo/rooms", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "updateMessage",
-              roomId: currentRoomId,
-              joinCode: roomCode,
-              member: currentMember,
-              message: translatedMessage,
-            }),
-          });
-        })
-        .catch((error) => {
+          if (currentRoomId) {
+            await fetch("/api/demo/rooms", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "updateMessage",
+                roomId: currentRoomId,
+                joinCode: roomCode,
+                member: currentMember,
+                message: translatedMessage,
+              }),
+            });
+          }
+        } catch (error) {
           console.error(error);
           setMessages((current) =>
             current.map((message) =>
@@ -2046,37 +1984,34 @@ export default function Home() {
             ),
           );
           setRoomStatus("消息已发送，但翻译生成失败。");
-        });
-
-      return;
-    }
-
-    if (hasReadyTranslations(optimisticMessage.translations, sender.language)) {
-      if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
-        const { error } = await supabase.from("messages").insert({
-          id: optimisticMessage.id,
-          room_id: currentRoomId,
-          sender_id: sessionUserId,
-          kind: optimisticMessage.kind,
-          original_language: optimisticMessage.originalLanguage,
-          original_text: optimisticMessage.originalText,
-          translations: optimisticMessage.translations,
-          voice_url: optimisticMessage.voiceUrl ?? null,
-          voice_duration: optimisticMessage.voiceDuration ?? null,
-        });
-
-        if (error) {
-          setRoomStatus(`消息已显示在本地，但数据库保存失败：${error.message}`);
-          return;
         }
-      }
+      });
 
-      setRoomStatus("消息已发送。");
       return;
     }
 
-    void translateText(textForTranslation, sender.language)
-      .then(async (translations) => {
+    if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
+      const { error } = await supabase.from("messages").insert({
+        id: optimisticMessage.id,
+        room_id: currentRoomId,
+        sender_id: sessionUserId,
+        kind: optimisticMessage.kind,
+        original_language: optimisticMessage.originalLanguage,
+        original_text: optimisticMessage.originalText,
+        translations: optimisticMessage.translations,
+        voice_url: optimisticMessage.voiceUrl ?? null,
+        voice_duration: optimisticMessage.voiceDuration ?? null,
+      });
+
+      if (error) {
+        setRoomStatus(`消息已显示在本地，但数据库保存失败：${error.message}`);
+        return;
+      }
+    }
+
+    enqueueTranslation(async () => {
+      try {
+        const translations = await translateText(textForTranslation, sender.language, { silent: true });
         const nextMessage: Message = {
           ...optimisticMessage,
           translations,
@@ -2086,27 +2021,19 @@ export default function Home() {
         setMessages((current) => current.map((message) => (message.id === optimisticMessage.id ? nextMessage : message)));
 
         if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
-          const { error } = await supabase.from("messages").insert({
-            id: nextMessage.id,
-            room_id: currentRoomId,
-            sender_id: sessionUserId,
-            kind: nextMessage.kind,
-            original_language: nextMessage.originalLanguage,
-            original_text: nextMessage.originalText,
-            translations: nextMessage.translations,
-            voice_url: nextMessage.voiceUrl ?? null,
-            voice_duration: nextMessage.voiceDuration ?? null,
-          });
+          const { error } = await supabase
+            .from("messages")
+            .update({
+              translations: nextMessage.translations,
+            })
+            .eq("id", nextMessage.id);
 
           if (error) {
-            setRoomStatus(`消息已显示在本地，但数据库保存失败：${error.message}`);
+            setRoomStatus(`消息已显示在本地，但翻译保存失败：${error.message}`);
             return;
           }
-
-          setRoomStatus("消息已发送。");
         }
-      })
-      .catch((error) => {
+      } catch (error) {
         console.error(error);
         setMessages((current) =>
           current.map((message) =>
@@ -2114,7 +2041,8 @@ export default function Home() {
           ),
         );
         setRoomStatus("消息已显示在本地，但翻译生成失败。");
-      });
+      }
+    });
   }
 
   async function publishVoiceMessage(voiceMessage: Message) {
@@ -2171,14 +2099,7 @@ export default function Home() {
     if (!text || recorderStateRef.current !== "idle") return;
 
     const sender = isPublicDemoRoom ? currentMember : activeViewer;
-    const readyPreTranslation =
-      preTranslation?.status === "ready" &&
-      preTranslation.text === text &&
-      preTranslation.sourceLanguage === sender.language
-        ? preTranslation.translations
-        : null;
-    const firstPassTranslations = readyPreTranslation ?? pendingTranslations(sender.language);
-    const hasPreparedTranslation = hasReadyTranslations(firstPassTranslations, sender.language);
+    const firstPassTranslations = pendingTranslations(sender.language);
     const optimisticMessage: Message = {
       id: crypto.randomUUID(),
       senderId: sender.id,
@@ -2187,14 +2108,11 @@ export default function Home() {
       originalText: text,
       translations: firstPassTranslations,
       createdAt: nowLabel(),
-      isPending: !hasPreparedTranslation,
+      isPending: true,
     };
 
     setMessageText("");
     messageTextRef.current = "";
-    setPreTranslation(null);
-    clearPreTranslateTimer();
-    preTranslateRequestIdRef.current += 1;
     broadcastTyping(false);
     setMessages((current) => [...current, optimisticMessage]);
     void publishMessage(optimisticMessage, text, sender);
