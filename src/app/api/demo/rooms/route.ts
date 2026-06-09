@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
 type Language = "zh" | "ko" | "en";
 type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
@@ -44,6 +45,17 @@ type DemoStore = {
   rooms: Map<string, DemoRoom>;
 };
 
+type DemoRoomRecord = {
+  id: string;
+  title: string;
+  join_code: string;
+  members: DemoMember[] | null;
+  messages: DemoMessage[] | null;
+  files: string[] | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 const globalStore = globalThis as typeof globalThis & {
   __polytalkDemoStore?: DemoStore;
 };
@@ -53,6 +65,18 @@ const store =
   (globalStore.__polytalkDemoStore = {
     rooms: new Map<string, DemoRoom>(),
   });
+
+function createDemoSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
 
 function normalizeJoinCode(input = "") {
   const digits = input.replace(/\D/g, "");
@@ -100,21 +124,72 @@ function serializeRoom(room: DemoRoom, options?: { memberCount?: number; message
   };
 }
 
-export async function POST(request: Request) {
-  const body = (await request.json()) as {
-    action: "create" | "join" | "sync" | "send" | "updateMessage" | "addFile" | "react";
-    title?: string;
-    joinCode?: string;
-    roomId?: string;
-    member?: DemoMember;
-    message?: DemoMessage;
-    messageId?: string;
-    fileName?: string;
-    reactionKey?: ReactionKey;
-    memberCount?: number;
-    messageCount?: number;
-    fileCount?: number;
+function roomFromRecord(record: DemoRoomRecord): DemoRoom {
+  return {
+    id: record.id,
+    title: record.title,
+    joinCode: normalizeJoinCode(record.join_code),
+    members: record.members ?? [],
+    messages: record.messages ?? [],
+    files: record.files ?? [],
+    createdAt: record.created_at ? new Date(record.created_at).getTime() : Date.now(),
+    updatedAt: record.updated_at ? new Date(record.updated_at).getTime() : Date.now(),
   };
+}
+
+async function findPersistentRoom(body: DemoRoomRequestBody) {
+  const supabase = createDemoSupabaseClient();
+  if (!supabase) return null;
+
+  const query = supabase.from("demo_rooms").select("*").limit(1);
+  const request = body.roomId ? query.eq("id", body.roomId) : query.eq("join_code", normalizeJoinCode(body.joinCode));
+  const { data, error } = await request.maybeSingle<DemoRoomRecord>();
+
+  if (error) throw error;
+  return data ? roomFromRecord(data) : null;
+}
+
+async function savePersistentRoom(room: DemoRoom) {
+  const supabase = createDemoSupabaseClient();
+  if (!supabase) return false;
+
+  const { error } = await supabase.from("demo_rooms").upsert({
+    id: room.id,
+    title: room.title,
+    join_code: normalizeJoinCode(room.joinCode),
+    members: room.members,
+    messages: room.messages,
+    files: room.files,
+    updated_at: new Date(room.updatedAt).toISOString(),
+  });
+
+  if (error) throw error;
+  return true;
+}
+
+function findMemoryRoom(body: DemoRoomRequestBody) {
+  return body.roomId
+    ? store.rooms.get(body.roomId)
+    : [...store.rooms.values()].find((item) => normalizeJoinCode(item.joinCode) === normalizeJoinCode(body.joinCode));
+}
+
+type DemoRoomRequestBody = {
+  action: "create" | "join" | "sync" | "send" | "updateMessage" | "addFile" | "react";
+  title?: string;
+  joinCode?: string;
+  roomId?: string;
+  member?: DemoMember;
+  message?: DemoMessage;
+  messageId?: string;
+  fileName?: string;
+  reactionKey?: ReactionKey;
+  memberCount?: number;
+  messageCount?: number;
+  fileCount?: number;
+};
+
+export async function POST(request: Request) {
+  const body = (await request.json()) as DemoRoomRequestBody;
 
   if (body.action === "create") {
     if (!body.member || !body.title || !body.joinCode) {
@@ -132,14 +207,28 @@ export async function POST(request: Request) {
       updatedAt: Date.now(),
     };
 
+    try {
+      await savePersistentRoom(room);
+      return NextResponse.json({ room: serializeRoom(room) });
+    } catch (error) {
+      console.error("Persistent demo room create failed, using memory fallback.", error);
+    }
+
     store.rooms.set(room.id, room);
     return NextResponse.json({ room: serializeRoom(room) });
   }
 
-  const room =
-    body.roomId
-      ? store.rooms.get(body.roomId)
-      : [...store.rooms.values()].find((item) => normalizeJoinCode(item.joinCode) === normalizeJoinCode(body.joinCode));
+  let room: DemoRoom | undefined | null;
+  let isPersistentRoom = false;
+
+  try {
+    room = await findPersistentRoom(body);
+    isPersistentRoom = Boolean(room);
+  } catch (error) {
+    console.error("Persistent demo room lookup failed, using memory fallback.", error);
+  }
+
+  room = room ?? findMemoryRoom(body);
 
   if (!room) {
     return NextResponse.json({ error: "Demo room not found." }, { status: 404 });
@@ -178,6 +267,17 @@ export async function POST(request: Request) {
     if (message) {
       toggleReaction(message, body.reactionKey, body.member.id);
       room.updatedAt = Date.now();
+    }
+  }
+
+  if (isPersistentRoom || createDemoSupabaseClient()) {
+    try {
+      await savePersistentRoom(room);
+    } catch (error) {
+      console.error("Persistent demo room save failed.", error);
+      if (isPersistentRoom) {
+        return NextResponse.json({ error: "Demo room save failed." }, { status: 500 });
+      }
     }
   }
 
