@@ -1025,6 +1025,10 @@ input:hover {
   font-weight: 760;
 }
 
+.sender-name {
+  font-weight: 900;
+}
+
 .message-reply-button {
   flex: 0 0 auto;
   display: inline-flex;

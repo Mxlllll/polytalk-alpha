@@ -222,6 +222,8 @@ const languageLabels: Record<Language, string> = {
 
 const supportedLanguages: Language[] = ["zh", "ko", "en"];
 
+const senderNameColors = ["#7A5CFF", "#D75F72", "#1C8A76", "#B26A00", "#2F73D9", "#8A5A9E", "#C05B2A", "#5F6F2E"];
+
 const translationPlaceholders: Record<Language, string> = {
   zh: "正在翻译...",
   ko: "번역 중...",
@@ -239,6 +241,11 @@ function pendingTranslations(sourceLanguage: Language): Partial<Record<Language,
     if (item !== sourceLanguage) accumulator[item] = translationPlaceholders[item];
     return accumulator;
   }, {});
+}
+
+function senderNameColor(senderId: string) {
+  const hash = Array.from(senderId).reduce((total, character) => total + character.charCodeAt(0), 0);
+  return senderNameColors[hash % senderNameColors.length];
 }
 
 const fileSummaryModeTitles: Record<FileSummaryMode, Record<Language, string>> = {
@@ -3992,7 +3999,10 @@ export default function Home() {
                 <article className={`message ${isMine ? "mine" : ""} ${isAi ? "ai" : ""} ${message.kind === "voice" ? "voice-message" : ""}`} key={message.id}>
                   <div className="message-meta">
                     <span>
-                      {isAi ? "AI" : sender?.name} · {message.createdAt}
+                      <strong className="sender-name" style={{ color: senderNameColor(message.senderId) }}>
+                        {isAi ? "AI" : sender?.name}
+                      </strong>{" "}
+                      · {message.createdAt}
                       {message.isPending ? ` · ${copy.translating}` : ""}
                     </span>
                     {!isHistoryView && !message.isPending ? (
