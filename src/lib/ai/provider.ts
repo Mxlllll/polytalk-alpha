@@ -10,9 +10,14 @@ type ChatCompletionPayload = {
 
 export type AiProviderSource = "deepseek" | "mock";
 
+const AI_TIMEOUT_MS = 18_000;
+
 function parseJsonObject<T>(content: string): T {
   const fencedMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  const jsonText = fencedMatch?.[1] ?? content;
+  const rawText = (fencedMatch?.[1] ?? content).trim();
+  const firstBrace = rawText.indexOf("{");
+  const lastBrace = rawText.lastIndexOf("}");
+  const jsonText = firstBrace >= 0 && lastBrace > firstBrace ? rawText.slice(firstBrace, lastBrace + 1) : rawText;
   return JSON.parse(jsonText) as T;
 }
 
@@ -25,6 +30,9 @@ export async function callAiJson<T>({
 }): Promise<{ data: T; source: AiProviderSource } | null> {
   const apiKey = process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
 
   const response = await fetch(process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com/chat/completions", {
     method: "POST",
@@ -46,7 +54,8 @@ export async function callAiJson<T>({
         },
       ],
     }),
-  });
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timer));
 
   if (!response.ok) {
     const message = await response.text();

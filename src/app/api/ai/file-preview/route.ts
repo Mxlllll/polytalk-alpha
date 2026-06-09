@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
+import { isSupportedPreviewFile, safeFileName } from "@/lib/ai/validation";
 import { extractPdfTextFromBuffer } from "@/lib/server/pdf-text";
 
 export const runtime = "nodejs";
+
+const MAX_FILE_BYTES = 12 * 1024 * 1024;
+const MAX_PREVIEW_CHARS = 6000;
 
 function normalizeWhitespace(text: string) {
   return text.replace(/\s+/g, " ").trim();
@@ -72,10 +76,36 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No valid file was provided." }, { status: 400 });
   }
 
+  const fileName = safeFileName(file.name);
+
+  if (file.size > MAX_FILE_BYTES) {
+    return NextResponse.json(
+      {
+        fileName,
+        previewText: "",
+        extractedTextLength: 0,
+        error: "The file is larger than 12MB. Please compress it and upload again.",
+      },
+      { status: 413 },
+    );
+  }
+
+  if (!isSupportedPreviewFile(file)) {
+    return NextResponse.json(
+      {
+        fileName,
+        previewText: "",
+        extractedTextLength: 0,
+        error: "Preview supports PDF, DOCX, PPTX, TXT, MD, and CSV files.",
+      },
+      { status: 415 },
+    );
+  }
+
   try {
-    const text = (await extractText(file)).slice(0, 6000);
+    const text = (await extractText(file)).slice(0, MAX_PREVIEW_CHARS);
     return NextResponse.json({
-      fileName: file.name,
+      fileName,
       previewText: text,
       extractedTextLength: text.length,
     });
@@ -83,7 +113,7 @@ export async function POST(request: Request) {
     console.error(error);
     return NextResponse.json(
       {
-        fileName: file.name,
+        fileName,
         previewText: "",
         extractedTextLength: 0,
         error: "File preview failed.",

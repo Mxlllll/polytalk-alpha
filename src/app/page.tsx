@@ -144,6 +144,11 @@ type FilePreview = {
   text: string;
 };
 
+const MAX_CHAT_MESSAGE_CHARS = 1800;
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+const MAX_VOICE_BYTES = 8 * 1024 * 1024;
+const allowedUploadExtensions = /\.(pdf|docx|pptx|png|jpe?g|webp|txt|md|csv)$/i;
+
 type HistoryRecord = {
   id: string;
   roomId?: string | null;
@@ -2572,10 +2577,15 @@ export default function Home() {
       return;
     }
 
-    messageTextRef.current = nextText;
-    setMessageText(nextText);
+    const safeText = nextText.slice(0, MAX_CHAT_MESSAGE_CHARS);
+    if (nextText.length > MAX_CHAT_MESSAGE_CHARS) {
+      setRoomStatus(`单条消息最多 ${MAX_CHAT_MESSAGE_CHARS} 字，已自动截断。`);
+    }
 
-    if (!nextText.trim() || stage !== "room" || isHistoryView) {
+    messageTextRef.current = safeText;
+    setMessageText(safeText);
+
+    if (!safeText.trim() || stage !== "room" || isHistoryView) {
       broadcastTyping(false);
       return;
     }
@@ -2946,6 +2956,12 @@ export default function Home() {
       return;
     }
 
+    if (blob.size > MAX_VOICE_BYTES) {
+      updateRecorderState("idle");
+      setRoomStatus("语音文件超过 8MB，请缩短录音后再发送。");
+      return;
+    }
+
     try {
       const localVoiceUrl = URL.createObjectURL(blob);
       const voiceMessage: Message = {
@@ -3247,8 +3263,13 @@ export default function Home() {
       body: formData,
     });
 
-    if (!response.ok) throw new Error("File summary request failed");
-    return (await response.json()) as FileSummaryApiResponse;
+    const data = (await response.json()) as Partial<FileSummaryApiResponse> & { error?: string };
+    if (data.summary && data.mode && typeof data.extractedTextLength === "number" && data.source) {
+      return data as FileSummaryApiResponse;
+    }
+
+    if (!response.ok) throw new Error(data.error ?? "File summary request failed");
+    throw new Error("File summary response was incomplete");
   }
 
   function summaryTextForLanguage(summary: Record<Language, string>, summaryLanguage: Language) {
@@ -3373,13 +3394,14 @@ export default function Home() {
         body: formData,
       });
 
-      if (!response.ok) throw new Error("File preview request failed");
-
       const data = (await response.json()) as {
         extractedTextLength: number;
         fileName: string;
         previewText: string;
+        error?: string;
       };
+
+      if (!response.ok) throw new Error(data.error ?? "File preview request failed");
 
       setFilePreview({
         fileName: data.fileName,
@@ -3401,6 +3423,16 @@ export default function Home() {
     if (!file) return;
     if (isRoomConnectionLost) {
       setRoomStatus(roomConnectionText.syncExpired);
+      return;
+    }
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setRoomStatus("文件超过 12MB，请压缩后再上传。");
+      return;
+    }
+
+    if (!allowedUploadExtensions.test(file.name)) {
+      setRoomStatus("暂不支持这个文件格式。请上传 PDF、DOCX、PPTX、图片或文本文件。");
       return;
     }
 
@@ -4185,9 +4217,12 @@ export default function Home() {
                 <label className={composerDisabled || isUploadingFile ? "file-button disabled" : "file-button"} title={copy.uploadFile}>
                   {isUploadingFile ? <Loader2 className="spin" size={18} /> : <Plus size={20} />}
                   <input
-                    accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.txt,.md,.csv"
+                    accept=".pdf,.docx,.pptx,.png,.jpg,.jpeg,.webp,.txt,.md,.csv"
                     disabled={composerDisabled || isUploadingFile}
-                    onChange={(event) => handleFile(event.target.files)}
+                    onChange={(event) => {
+                      void handleFile(event.target.files);
+                      event.currentTarget.value = "";
+                    }}
                     type="file"
                   />
                 </label>
@@ -4195,6 +4230,7 @@ export default function Home() {
                   disabled={composerDisabled}
                   placeholder={isRoomConnectionLost ? roomConnectionText.syncExpired : copy.messagePlaceholder(activeViewer.name)}
                   value={messageText}
+                  maxLength={MAX_CHAT_MESSAGE_CHARS}
                   onChange={(event) => handleMessageTextChange(event.target.value)}
                 />
                 <button

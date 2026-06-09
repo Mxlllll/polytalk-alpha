@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { cleanText, isSupportedLanguage, safeFileName } from "@/lib/ai/validation";
 
 type Language = "zh" | "ko" | "en";
 
@@ -196,19 +197,123 @@ type DemoRoomRequestBody = {
   fileCount?: number;
 };
 
+const actions = ["create", "join", "sync", "send", "updateMessage", "addFile"] as const;
+const messageKinds = ["text", "voice", "file", "file_summary", "discussion_summary"] as const;
+const MAX_MEMBERS = 20;
+const MAX_MESSAGES = 500;
+const MAX_FILES = 100;
+const MAX_MESSAGE_TEXT = 2500;
+const MAX_VOICE_URL_CHARS = 1_200_000;
+
+function isDemoAction(value: unknown): value is DemoRoomRequestBody["action"] {
+  return typeof value === "string" && actions.includes(value as DemoRoomRequestBody["action"]);
+}
+
+function isMessageKind(value: unknown): value is DemoMessage["kind"] {
+  return typeof value === "string" && messageKinds.includes(value as DemoMessage["kind"]);
+}
+
+function normalizeMember(value: unknown): DemoMember | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<DemoMember>;
+  if (!isSupportedLanguage(record.language)) return null;
+
+  const id = cleanText(record.id, 80);
+  const name = cleanText(record.name, 80) || "Guest";
+  if (!id) return null;
+
+  return {
+    id,
+    name,
+    email: cleanText(record.email, 120),
+    language: record.language,
+  };
+}
+
+function normalizeQuote(value: unknown): MessageQuote | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<MessageQuote>;
+  if (!isSupportedLanguage(record.originalLanguage)) return null;
+
+  const messageId = cleanText(record.messageId, 80);
+  const senderId = cleanText(record.senderId, 80);
+  const originalText = cleanText(record.originalText, 800);
+  if (!messageId || !senderId || !originalText) return null;
+
+  return {
+    messageId,
+    senderId,
+    senderName: cleanText(record.senderName, 80) || "Unknown",
+    originalLanguage: record.originalLanguage,
+    originalText,
+    translations: record.translations ?? {},
+  };
+}
+
+function normalizeMessage(value: unknown): DemoMessage | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<DemoMessage>;
+  if (!isMessageKind(record.kind) || !isSupportedLanguage(record.originalLanguage)) return null;
+
+  const id = cleanText(record.id, 80);
+  const senderId = cleanText(record.senderId, 80);
+  const originalText = cleanText(record.originalText, MAX_MESSAGE_TEXT);
+  if (!id || !senderId || !originalText) return null;
+
+  const voiceUrl = typeof record.voiceUrl === "string" ? record.voiceUrl.slice(0, MAX_VOICE_URL_CHARS) : undefined;
+
+  return {
+    id,
+    senderId,
+    kind: record.kind,
+    originalLanguage: record.originalLanguage,
+    originalText,
+    translations: record.translations ?? {},
+    attachmentId: cleanText(record.attachmentId, 80) || null,
+    fileName: record.fileName ? safeFileName(record.fileName) : undefined,
+    filePath: cleanText(record.filePath, 300) || undefined,
+    fileType: cleanText(record.fileType, 120) || null,
+    voiceUrl,
+    voiceDuration: typeof record.voiceDuration === "number" ? Math.max(0, Math.min(600, record.voiceDuration)) : undefined,
+    createdAt: cleanText(record.createdAt, 40) || new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    isPending: Boolean(record.isPending),
+    quote: normalizeQuote(record.quote),
+  };
+}
+
+function trimRoom(room: DemoRoom) {
+  if (room.members.length > MAX_MEMBERS) room.members = room.members.slice(-MAX_MEMBERS);
+  if (room.messages.length > MAX_MESSAGES) room.messages = room.messages.slice(-MAX_MESSAGES);
+  if (room.files.length > MAX_FILES) room.files = room.files.slice(-MAX_FILES);
+}
+
 export async function POST(request: Request) {
-  const body = (await request.json()) as DemoRoomRequestBody;
+  let body: DemoRoomRequestBody;
+
+  try {
+    body = (await request.json()) as DemoRoomRequestBody;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
+  if (!isDemoAction(body.action)) {
+    return NextResponse.json({ error: "Invalid demo room action." }, { status: 400 });
+  }
 
   if (body.action === "create") {
-    if (!body.member || !body.title || !body.joinCode) {
+    const member = normalizeMember(body.member);
+    const title = cleanText(body.title, 80);
+    const joinCode = normalizeJoinCode(body.joinCode);
+
+    if (!member || !title || !joinCode) {
       return NextResponse.json({ error: "Missing demo room fields." }, { status: 400 });
     }
 
     const room: DemoRoom = {
       id: crypto.randomUUID(),
-      title: body.title,
-      joinCode: normalizeJoinCode(body.joinCode),
-      members: [body.member],
+      title,
+      joinCode,
+      members: [member],
       messages: [],
       files: [],
       createdAt: Date.now(),
@@ -254,33 +359,52 @@ export async function POST(request: Request) {
     });
   }
 
-  if (body.member) {
-    upsertMember(room, body.member);
+  const member = normalizeMember(body.member);
+
+  if (member) {
+    upsertMember(room, member);
     room.updatedAt = Date.now();
   }
 
   if (body.action === "send" && body.message) {
-    if (!room.messages.some((message) => message.id === body.message?.id)) {
-      room.messages.push(body.message);
+    const message = normalizeMessage(body.message);
+    if (!message) return NextResponse.json({ error: "Invalid demo message." }, { status: 400 });
+
+    if (!room.members.some((item) => item.id === message.senderId) && message.senderId !== "ai") {
+      return NextResponse.json({ error: "Sender is not a room member." }, { status: 403 });
+    }
+
+    if (!room.messages.some((item) => item.id === message.id)) {
+      room.messages.push(message);
       room.updatedAt = Date.now();
     }
   }
 
   if (body.action === "updateMessage" && body.message) {
-    const existingIndex = room.messages.findIndex((message) => message.id === body.message?.id);
+    const message = normalizeMessage(body.message);
+    if (!message) return NextResponse.json({ error: "Invalid demo message update." }, { status: 400 });
+
+    const existingIndex = room.messages.findIndex((item) => item.id === message.id);
     if (existingIndex >= 0) {
       room.messages[existingIndex] = {
         ...room.messages[existingIndex],
-        ...body.message,
+        ...message,
+        quote: message.quote ?? room.messages[existingIndex].quote ?? null,
       };
       room.updatedAt = Date.now();
     }
   }
 
-  if (body.action === "addFile" && body.fileName && !room.files.includes(body.fileName)) {
-    room.files.push(body.fileName);
-    room.updatedAt = Date.now();
+  if (body.action === "addFile" && body.fileName) {
+    const fileName = safeFileName(body.fileName);
+    if (fileName && !room.files.includes(fileName)) {
+      room.files.push(fileName);
+      room.updatedAt = Date.now();
+    }
   }
+
+  trimRoom(room);
+  room.updatedAt = Date.now();
 
   rememberRoom(room);
 

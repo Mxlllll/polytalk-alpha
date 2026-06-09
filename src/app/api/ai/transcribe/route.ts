@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Language } from "@/lib/ai/mock";
+import { isSupportedLanguage, safeFileName } from "@/lib/ai/validation";
 
 type TranscribeResponse = {
   text: string;
@@ -13,6 +14,9 @@ const groqLanguageHints: Record<Language, string> = {
   en: "en",
 };
 
+const MAX_VOICE_BYTES = 8 * 1024 * 1024;
+const supportedAudioTypes = ["audio/webm", "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg", "audio/x-wav"];
+
 export async function POST(request: Request) {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -21,29 +25,48 @@ export async function POST(request: Request) {
 
   const formData = await request.formData();
   const file = formData.get("file");
-  const language = (formData.get("language") ?? "zh") as Language;
+  const languageValue = formData.get("language") ?? "zh";
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Missing voice file." }, { status: 400 });
   }
 
+  if (!isSupportedLanguage(languageValue)) {
+    return NextResponse.json({ error: "Unsupported transcription language." }, { status: 400 });
+  }
+
+  if (file.size > MAX_VOICE_BYTES) {
+    return NextResponse.json({ error: "Voice file is larger than 8MB." }, { status: 413 });
+  }
+
+  if (file.type && !supportedAudioTypes.includes(file.type)) {
+    return NextResponse.json({ error: "Unsupported voice file type." }, { status: 415 });
+  }
+
   const transcriptionForm = new FormData();
-  transcriptionForm.append("file", file, file.name || "voice.webm");
+  transcriptionForm.append("file", file, safeFileName(file.name || "voice.webm"));
   transcriptionForm.append("model", process.env.GROQ_STT_MODEL || "whisper-large-v3-turbo");
   transcriptionForm.append("response_format", "json");
   transcriptionForm.append("temperature", "0");
-  transcriptionForm.append("language", groqLanguageHints[language] ?? "zh");
+  transcriptionForm.append("language", groqLanguageHints[languageValue]);
 
-  const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: transcriptionForm,
-  });
+  let response: Response;
+
+  try {
+    response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: transcriptionForm,
+    });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "Voice transcription service is unavailable." }, { status: 503 });
+  }
 
   if (!response.ok) {
-    const message = await response.text();
+    const message = (await response.text()).slice(0, 300);
     return NextResponse.json({ error: `Groq transcription failed: ${message}` }, { status: response.status });
   }
 
@@ -56,7 +79,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     text,
-    language,
+    language: languageValue,
     source: "groq",
   } satisfies TranscribeResponse);
 }
