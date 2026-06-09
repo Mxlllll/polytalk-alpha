@@ -9,6 +9,9 @@ import {
   Loader2,
   LogOut,
   Mic,
+  MoreHorizontal,
+  Pause,
+  Play,
   Plus,
   Send,
   Sparkles,
@@ -24,6 +27,10 @@ type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
 type MessageReactions = Partial<Record<ReactionKey, string[]>>;
 
 type RecorderState = "idle" | "recording" | "processing";
+type VoiceTranscriptSelection = {
+  messageId: string;
+  language: Language;
+};
 
 type Member = {
   id: string;
@@ -284,6 +291,7 @@ const uiCopy: Record<
     voiceUnsupported: string;
     retranscribeVoice: string;
     summarizeVoice: string;
+    transcribeTo: (language: string) => string;
     endAndSave: string;
     defaultRoomTitle: (date: string) => string;
     backHome: string;
@@ -334,6 +342,7 @@ const uiCopy: Record<
     voiceUnsupported: "当前浏览器不支持录音",
     retranscribeVoice: "重新转写",
     summarizeVoice: "总结语音",
+    transcribeTo: (languageName) => `转成${languageName}`,
     endAndSave: "结束并保存",
     defaultRoomTitle: (date) => `课堂讨论 ${date}`,
     backHome: "返回首页",
@@ -383,6 +392,7 @@ const uiCopy: Record<
     voiceUnsupported: "현재 브라우저는 녹음을 지원하지 않습니다",
     retranscribeVoice: "다시 변환",
     summarizeVoice: "음성 요약",
+    transcribeTo: (languageName) => `${languageName}로 변환`,
     endAndSave: "종료하고 저장",
     defaultRoomTitle: (date) => `수업 토론 ${date}`,
     backHome: "홈으로",
@@ -432,6 +442,7 @@ const uiCopy: Record<
     voiceUnsupported: "Recording is not supported in this browser",
     retranscribeVoice: "Retranscribe",
     summarizeVoice: "Summarize voice",
+    transcribeTo: (languageName) => `Transcribe to ${languageName}`,
     endAndSave: "End and save",
     defaultRoomTitle: (date) => `Class discussion ${date}`,
     backHome: "Back home",
@@ -849,6 +860,9 @@ export default function Home() {
   const [messageText, setMessageText] = useState("");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const voiceAudioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+  const voiceLongPressTimersRef = useRef<Record<string, number>>({});
+  const voiceLongPressTriggeredRef = useRef(false);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingStartedAtRef = useRef(0);
   const recordingTimerRef = useRef<number | null>(null);
@@ -871,6 +885,9 @@ export default function Home() {
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>(() => loadLocalHistory(getOrCreateDemoUserId()));
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isHistoryView, setIsHistoryView] = useState(false);
+  const [activeVoiceMenuId, setActiveVoiceMenuId] = useState<string | null>(null);
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const [voiceTranscriptSelection, setVoiceTranscriptSelection] = useState<VoiceTranscriptSelection | null>(null);
   const memberCountRef = useRef(0);
   const demoSyncInFlightRef = useRef(false);
 
@@ -1705,15 +1722,41 @@ export default function Home() {
     mediaStreamRef.current = null;
   }
 
+  function preferredVoiceMimeType() {
+    const candidates = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+    return candidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+  }
+
+  function voiceFileExtension(blob: Blob) {
+    if (blob.type.includes("mp4")) return "mp4";
+    if (blob.type.includes("ogg")) return "ogg";
+    if (blob.type.includes("mpeg")) return "mp3";
+    if (blob.type.includes("wav")) return "wav";
+    return "webm";
+  }
+
+  function blobToDataUrl(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function isVoiceTranscriptReady(message: Message) {
+    return Boolean(message.originalText.trim() && message.originalText !== "[voice message]");
+  }
+
   async function maybeUploadVoice(blob: Blob) {
     if (!supabaseConfigured || !currentRoomId) return undefined;
 
     try {
       const voiceId = crypto.randomUUID();
-      const filePath = `${currentRoomId}/${voiceId}.webm`;
+      const filePath = `${currentRoomId}/${voiceId}.${voiceFileExtension(blob)}`;
       const { error } = await supabase.storage.from("voice-messages").upload(filePath, blob, {
         cacheControl: "3600",
-        contentType: blob.type || "audio/webm",
+        contentType: blob.type || "audio/mp4",
         upsert: false,
       });
 
@@ -1728,7 +1771,7 @@ export default function Home() {
   }
 
   async function transcribeVoice(blob: Blob, voiceLanguage: Language) {
-    const file = new File([blob], "voice.webm", { type: blob.type || "audio/webm" });
+    const file = new File([blob], `voice.${voiceFileExtension(blob)}`, { type: blob.type || "audio/mp4" });
     const formData = new FormData();
     formData.append("file", file);
     formData.append("language", voiceLanguage);
@@ -1840,6 +1883,59 @@ export default function Home() {
     setMessages((current) => current.map((message) => (message.id === optimisticMessage.id ? nextMessage : message)));
   }
 
+  async function publishVoiceMessage(voiceMessage: Message) {
+    setMessages((current) => [...current, voiceMessage]);
+
+    if (isPublicDemoRoom && currentRoomId) {
+      try {
+        const response = await fetch("/api/demo/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "send",
+            roomId: currentRoomId,
+            member: currentMember,
+            message: voiceMessage,
+          }),
+        });
+        const data = (await response.json()) as DemoRoomApiResponse;
+        if (!response.ok || !data.room) throw new Error(data.error ?? "Demo voice message failed");
+      } catch (error) {
+        console.error(error);
+        setMessages((current) => current.filter((message) => message.id !== voiceMessage.id));
+        setRoomStatus("语音消息发送失败，请稍后再试。");
+      }
+      return;
+    }
+
+    if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
+      const { error } = await supabase.from("messages").insert({
+        id: voiceMessage.id,
+        room_id: currentRoomId,
+        sender_id: sessionUserId,
+        kind: "voice",
+        original_language: voiceMessage.originalLanguage,
+        original_text: voiceMessage.originalText,
+        translations: voiceMessage.translations,
+        voice_url: voiceMessage.voiceUrl ?? null,
+        voice_duration: voiceMessage.voiceDuration ?? null,
+      });
+
+      if (error) {
+        setMessages((current) => current.filter((message) => message.id !== voiceMessage.id));
+        setRoomStatus(`语音发送失败：${error.message}`);
+        return;
+      }
+
+      await loadMessages(currentRoomId);
+      await loadRoomMembers(currentRoomId);
+      setRoomStatus("语音消息已发送。长按或右键语音条可转文字。");
+      return;
+    }
+
+    setRoomStatus("语音消息已发送。长按或右键语音条可转文字。");
+  }
+
   async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = messageText.trim();
@@ -1878,7 +1974,8 @@ export default function Home() {
 
     try {
       const stream = await window.navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorderOptions = MediaRecorder.isTypeSupported("audio/webm") ? { mimeType: "audio/webm" } : undefined;
+      const voiceMimeType = preferredVoiceMimeType();
+      const recorderOptions = voiceMimeType ? { mimeType: voiceMimeType } : undefined;
       const recorder = new MediaRecorder(stream, recorderOptions);
       mediaStreamRef.current = stream;
       mediaRecorderRef.current = recorder;
@@ -1894,7 +1991,7 @@ export default function Home() {
 
       recorder.onstop = () => {
         const duration = Math.max(1, Math.round((Date.now() - recordingStartedAtRef.current) / 1000));
-        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || voiceMimeType || "audio/mp4" });
         audioChunksRef.current = [];
         void sendVoiceBlob(blob, duration);
       };
@@ -1935,36 +2032,36 @@ export default function Home() {
 
     try {
       const localVoiceUrl = URL.createObjectURL(blob);
-      const [transcript, uploadedVoiceUrl] = await Promise.all([
-        transcribeVoice(blob, sender.language),
-        maybeUploadVoice(blob),
-      ]);
+      const uploadedVoiceUrl = await maybeUploadVoice(blob);
+      const fallbackVoiceUrl = isPublicDemoRoom && !uploadedVoiceUrl ? await blobToDataUrl(blob) : localVoiceUrl;
 
       const voiceMessage: Message = {
         id: crypto.randomUUID(),
         senderId: sender.id,
         kind: "voice",
         originalLanguage: sender.language,
-        originalText: transcript,
+        originalText: "[voice message]",
         translations: {},
-        voiceUrl: uploadedVoiceUrl ?? localVoiceUrl,
+        voiceUrl: uploadedVoiceUrl ?? fallbackVoiceUrl,
         voiceDuration: duration,
         createdAt: nowLabel(),
-        isPending: true,
+        isPending: false,
       };
 
       updateRecorderState("idle");
       setRecordingSeconds(0);
-      await publishMessage(voiceMessage, transcript, sender);
+      await publishVoiceMessage(voiceMessage);
     } catch (error) {
       console.error(error);
       updateRecorderState("idle");
       setRecordingSeconds(0);
-      setRoomStatus(error instanceof Error ? `语音转文字失败：${error.message}` : "语音转文字失败，请稍后再试。");
+      setRoomStatus(error instanceof Error ? `语音发送失败：${error.message}` : "语音发送失败，请稍后再试。");
     }
   }
 
   async function summarizeVoiceMessage(message: Message) {
+    const voiceText = isVoiceTranscriptReady(message) ? message.originalText : await transcribeVoiceMessage(message, message.originalLanguage);
+
     setIsSummarizing(true);
     setRoomStatus("正在总结这条语音...");
 
@@ -1979,7 +2076,7 @@ export default function Home() {
             {
               senderName: members.find((member) => member.id === message.senderId)?.name ?? "Voice",
               originalLanguage: message.originalLanguage,
-              originalText: message.originalText,
+              originalText: voiceText,
             },
           ],
         }),
@@ -2012,21 +2109,30 @@ export default function Home() {
     }
   }
 
-  async function retranscribeVoiceMessage(message: Message) {
+  async function transcribeVoiceMessage(message: Message, targetLanguage: Language) {
     if (!message.voiceUrl) {
       setRoomStatus("这条语音没有可读取的音频，无法重新转写。");
-      return;
+      return message.originalText;
     }
 
-    setRoomStatus("正在重新转写这条语音...");
+    setActiveVoiceMenuId(null);
+    setRoomStatus(`${copy.transcribeTo(languageLabels[targetLanguage])}...`);
 
     try {
-      const audioResponse = await fetch(message.voiceUrl);
-      if (!audioResponse.ok) throw new Error("Voice file could not be loaded");
+      let transcript = isVoiceTranscriptReady(message) ? message.originalText : "";
+      let translations = message.translations;
 
-      const blob = await audioResponse.blob();
-      const transcript = await transcribeVoice(blob, message.originalLanguage);
-      const translations = await translateText(transcript, message.originalLanguage);
+      if (!transcript) {
+        const audioResponse = await fetch(message.voiceUrl);
+        if (!audioResponse.ok) throw new Error("Voice file could not be loaded");
+
+        const blob = await audioResponse.blob();
+        transcript = await transcribeVoice(blob, message.originalLanguage);
+        translations = await translateText(transcript, message.originalLanguage);
+      } else if (targetLanguage !== message.originalLanguage && !translations[targetLanguage]) {
+        translations = await translateText(transcript, message.originalLanguage);
+      }
+
       const updatedMessage: Message = {
         ...message,
         originalText: transcript,
@@ -2035,6 +2141,7 @@ export default function Home() {
       };
 
       setMessages((current) => current.map((item) => (item.id === message.id ? updatedMessage : item)));
+      setVoiceTranscriptSelection({ messageId: message.id, language: targetLanguage });
 
       if (isPublicDemoRoom && currentRoomId) {
         await fetch("/api/demo/rooms", {
@@ -2050,10 +2157,65 @@ export default function Home() {
       }
 
       setRoomStatus("语音已重新转写并更新翻译。");
+      return transcript;
     } catch (error) {
       console.error(error);
       setRoomStatus("重新转写失败：音频可能只保存在发送者本机，或远端语音文件不可读取。");
+      return message.originalText;
     }
+  }
+
+  function voiceTranscriptText(message: Message) {
+    if (!voiceTranscriptSelection || voiceTranscriptSelection.messageId !== message.id) return "";
+    if (!isVoiceTranscriptReady(message)) return "";
+    if (voiceTranscriptSelection.language === message.originalLanguage) return message.originalText;
+    return message.translations[voiceTranscriptSelection.language] ?? message.originalText;
+  }
+
+  async function toggleVoicePlayback(message: Message) {
+    if (!message.voiceUrl) {
+      setRoomStatus("这条语音没有可播放的音频。");
+      return;
+    }
+
+    const audio = voiceAudioRefs.current[message.id];
+    if (!audio) return;
+
+    try {
+      Object.entries(voiceAudioRefs.current).forEach(([id, item]) => {
+        if (id !== message.id) item?.pause();
+      });
+
+      if (audio.paused) {
+        await audio.play();
+        setPlayingVoiceId(message.id);
+      } else {
+        audio.pause();
+        setPlayingVoiceId(null);
+      }
+    } catch (error) {
+      console.error(error);
+      setRoomStatus("原音频播放失败。可以长按语音条转文字查看。");
+    }
+  }
+
+  function openVoiceMenu(messageId: string) {
+    setActiveVoiceMenuId((current) => (current === messageId ? null : messageId));
+  }
+
+  function startVoiceLongPress(messageId: string) {
+    voiceLongPressTriggeredRef.current = false;
+    window.clearTimeout(voiceLongPressTimersRef.current[messageId]);
+    voiceLongPressTimersRef.current[messageId] = window.setTimeout(() => {
+      voiceLongPressTriggeredRef.current = true;
+      setActiveVoiceMenuId(messageId);
+    }, 520);
+  }
+
+  function endVoiceLongPress(message: Message) {
+    window.clearTimeout(voiceLongPressTimersRef.current[message.id]);
+    if (voiceLongPressTriggeredRef.current) return;
+    void toggleVoicePlayback(message);
   }
 
   async function summarizeDiscussion() {
@@ -2763,17 +2925,77 @@ export default function Home() {
                       <>
                         {message.kind === "voice" ? (
                           <div className="voice-card">
-                            <div className="voice-card-head">
-                              <span className="voice-icon">
-                                <Mic size={15} />
-                              </span>
-                              <strong>Voice {formatVoiceDuration(message.voiceDuration)}</strong>
+                            {message.voiceUrl ? (
+                              <audio
+                                onEnded={() => setPlayingVoiceId(null)}
+                                preload="metadata"
+                                ref={(node) => {
+                                  voiceAudioRefs.current[message.id] = node;
+                                }}
+                                src={message.voiceUrl}
+                              />
+                            ) : null}
+                            <div className="voice-bar-wrap">
+                              <button
+                                aria-label="Voice message"
+                                className="voice-bar"
+                                onContextMenu={(event) => {
+                                  event.preventDefault();
+                                  openVoiceMenu(message.id);
+                                }}
+                                onPointerCancel={() => window.clearTimeout(voiceLongPressTimersRef.current[message.id])}
+                                onPointerDown={() => startVoiceLongPress(message.id)}
+                                onPointerLeave={() => window.clearTimeout(voiceLongPressTimersRef.current[message.id])}
+                                onPointerUp={() => endVoiceLongPress(message)}
+                                type="button"
+                              >
+                                <span className="voice-icon">
+                                  {playingVoiceId === message.id ? <Pause size={15} /> : <Play size={15} />}
+                                </span>
+                                <strong>Voice {formatVoiceDuration(message.voiceDuration)}</strong>
+                                <span className="voice-wave" aria-hidden="true">
+                                  <i />
+                                  <i />
+                                  <i />
+                                  <i />
+                                </span>
+                              </button>
+                              <button
+                                aria-label="Voice actions"
+                                className="voice-more-button"
+                                onClick={() => openVoiceMenu(message.id)}
+                                type="button"
+                              >
+                                <MoreHorizontal size={16} />
+                              </button>
+                              {activeVoiceMenuId === message.id ? (
+                                <div className="voice-menu">
+                                  {(["zh", "ko", "en"] as Language[]).map((item) => (
+                                    <button key={item} onClick={() => transcribeVoiceMessage(message, item)} type="button">
+                                      {copy.transcribeTo(languageLabels[item])}
+                                    </button>
+                                  ))}
+                                  <button onClick={() => summarizeVoiceMessage(message)} type="button">
+                                    {copy.summarizeVoice}
+                                  </button>
+                                </div>
+                              ) : null}
                             </div>
-                            {message.voiceUrl ? <audio controls preload="metadata" src={message.voiceUrl} /> : null}
+                            {voiceTranscriptText(message) ? (
+                              <div className="voice-transcript">
+                                <p className="main-text">{voiceTranscriptText(message)}</p>
+                                <p className="secondary-text">
+                                  {languageLabels[message.originalLanguage]} {copy.original} · {message.originalText}
+                                </p>
+                              </div>
+                            ) : null}
                           </div>
-                        ) : null}
-                        <p className="main-text">{mainText(message)}</p>
-                        <p className="secondary-text">{secondaryText(message)}</p>
+                        ) : (
+                          <>
+                            <p className="main-text">{mainText(message)}</p>
+                            <p className="secondary-text">{secondaryText(message)}</p>
+                          </>
+                        )}
                       </>
                     )}
                     {!isHistoryView && message.fileName && message.attachmentId ? (
@@ -2785,18 +3007,6 @@ export default function Home() {
                         <button onClick={() => summarizeUploadedFile(message)} type="button">
                           <Sparkles size={15} />
                           {fileActionLabels.summarize[activeViewer.language]}
-                        </button>
-                      </div>
-                    ) : null}
-                    {!isHistoryView && message.kind === "voice" ? (
-                      <div className="file-actions voice-actions">
-                        <button onClick={() => retranscribeVoiceMessage(message)} type="button">
-                          <Mic size={15} />
-                          {copy.retranscribeVoice}
-                        </button>
-                        <button onClick={() => summarizeVoiceMessage(message)} type="button">
-                          <Sparkles size={15} />
-                          {copy.summarizeVoice}
                         </button>
                       </div>
                     ) : null}

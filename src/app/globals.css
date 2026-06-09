@@ -863,30 +863,54 @@ input:hover {
 
 .voice-card {
   display: grid;
-  gap: 8px;
-  margin-bottom: 10px;
-  border: 1px solid rgba(36, 34, 42, 0.08);
-  border-radius: 18px;
-  padding: 10px;
-  background: rgba(248, 247, 250, 0.74);
+  gap: 10px;
+  margin-bottom: 2px;
+  position: relative;
 }
 
 .message.mine .voice-card {
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.12);
+  justify-items: end;
 }
 
-.voice-card-head {
+.voice-card audio {
+  display: none;
+}
+
+.voice-bar-wrap {
+  position: relative;
+  width: min(310px, 100%);
+}
+
+.voice-bar {
+  width: 100%;
+  min-height: 46px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  justify-content: flex-start;
+  gap: 10px;
+  border: 1px solid rgba(36, 34, 42, 0.08);
+  border-radius: 999px;
+  padding: 7px 12px 7px 8px;
+  color: var(--ink);
+  background: rgba(248, 247, 250, 0.88);
+  box-shadow: 0 12px 28px rgba(36, 34, 42, 0.07);
+  font-size: 13px;
   font-weight: 850;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+.message.mine .voice-bar {
+  color: white;
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: none;
 }
 
 .voice-icon {
-  width: 26px;
-  height: 26px;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -900,9 +924,94 @@ input:hover {
   background: rgba(255, 255, 255, 0.18);
 }
 
-.voice-card audio {
+.voice-wave {
+  flex: 1;
+  min-width: 64px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.56;
+}
+
+.voice-wave i {
   width: 100%;
-  height: 34px;
+  height: 4px;
+  display: block;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.voice-wave i:nth-child(2) {
+  height: 7px;
+}
+
+.voice-wave i:nth-child(3) {
+  height: 10px;
+}
+
+.voice-more-button {
+  position: absolute;
+  right: -8px;
+  bottom: -9px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 8px 18px rgba(36, 34, 42, 0.08);
+}
+
+.message.mine .voice-more-button {
+  color: white;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.voice-menu {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  top: calc(100% + 10px);
+  width: 190px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 40px rgba(36, 34, 42, 0.14);
+  backdrop-filter: blur(14px);
+}
+
+.voice-menu button {
+  justify-content: flex-start;
+  min-height: 34px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 10px;
+  color: var(--ink);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.voice-menu button:hover {
+  background: rgba(243, 238, 231, 0.9);
+}
+
+.voice-transcript {
+  max-width: 100%;
+  margin-top: 3px;
+  border-top: 1px solid rgba(36, 34, 42, 0.06);
+  padding-top: 10px;
+}
+
+.message.mine .voice-transcript {
+  border-top-color: rgba(255, 255, 255, 0.16);
 }
 
 .file-chip {
