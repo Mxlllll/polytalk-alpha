@@ -157,6 +157,10 @@ async function findPersistentRoom(body: DemoRoomRequestBody) {
   return data ? roomFromRecord(data) : null;
 }
 
+function rememberRoom(room: DemoRoom) {
+  store.rooms.set(room.id, room);
+}
+
 async function savePersistentRoom(room: DemoRoom) {
   const supabase = createDemoSupabaseClient();
   if (!supabase) return false;
@@ -217,12 +221,13 @@ export async function POST(request: Request) {
 
     try {
       await savePersistentRoom(room);
+      rememberRoom(room);
       return NextResponse.json({ room: serializeRoom(room) });
     } catch (error) {
       console.error("Persistent demo room create failed, using memory fallback.", error);
     }
 
-    store.rooms.set(room.id, room);
+    rememberRoom(room);
     return NextResponse.json({ room: serializeRoom(room) });
   }
 
@@ -232,6 +237,7 @@ export async function POST(request: Request) {
   try {
     room = await findPersistentRoom(body);
     isPersistentRoom = Boolean(room);
+    if (room) rememberRoom(room);
   } catch (error) {
     console.error("Persistent demo room lookup failed, using memory fallback.", error);
   }
@@ -288,14 +294,13 @@ export async function POST(request: Request) {
     }
   }
 
+  rememberRoom(room);
+
   if (isPersistentRoom || createDemoSupabaseClient()) {
     try {
       await savePersistentRoom(room);
     } catch (error) {
       console.error("Persistent demo room save failed.", error);
-      if (isPersistentRoom) {
-        return NextResponse.json({ error: "Demo room save failed." }, { status: 500 });
-      }
     }
   }
 

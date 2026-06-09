@@ -176,6 +176,10 @@ type DemoRoomRealtimeRow = {
   files: string[] | null;
 };
 
+type DemoRoomSyncError = Error & {
+  status?: number;
+};
+
 const reactionOptions: {
   emoji: string;
   key: ReactionKey;
@@ -1184,7 +1188,11 @@ export default function Home() {
       });
 
       const data = (await response.json()) as DemoRoomApiResponse;
-      if (!response.ok || !data.room) throw new Error(data.error ?? "Demo room sync failed");
+      if (!response.ok || !data.room) {
+        const error = new Error(data.error ?? "Demo room sync failed") as DemoRoomSyncError;
+        error.status = response.status;
+        throw error;
+      }
 
       mergeDemoRoomSnapshot(data.room);
       setActiveViewerId(member.id);
@@ -1271,7 +1279,8 @@ export default function Home() {
         .catch((error) => {
           console.error(error);
           demoSyncFailureCountRef.current += 1;
-          if (demoSyncFailureCountRef.current >= 8) {
+          const syncError = error as DemoRoomSyncError;
+          if (syncError.status === 404 && demoSyncFailureCountRef.current >= 3) {
             setIsRoomConnectionLost(true);
             setIsPublicDemoRoom(false);
             setRoomStatus(statusText.syncExpired);
@@ -1284,7 +1293,7 @@ export default function Home() {
         .finally(() => {
           demoSyncInFlightRef.current = false;
         });
-    }, 900);
+    }, 1600);
 
     return () => window.clearInterval(refreshTimer);
   }, [activeViewer.language, currentRoomId, isPublicDemoRoom, isRoomConnectionLost, syncDemoRoom]);
