@@ -479,6 +479,17 @@ input:hover {
   margin-top: 16px;
 }
 
+.ai-results-modal {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.ai-results-list {
+  max-height: min(58vh, 520px);
+  margin-top: 14px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 .history-list {
   display: grid;
   gap: 8px;

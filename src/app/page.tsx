@@ -949,6 +949,7 @@ export default function Home() {
   const [localFiles, setLocalFiles] = useState<Record<string, File>>({});
   const [privateAiResults, setPrivateAiResults] = useState<PrivateAiResult[]>([]);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
+  const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>(() => loadLocalHistory(getOrCreateDemoUserId()));
@@ -1594,6 +1595,7 @@ export default function Home() {
     setFiles([]);
     setPrivateAiResults([]);
     setFilePreview(null);
+    setIsAiPanelOpen(false);
     setRoomMembers([currentMember]);
     setActiveViewerId(currentMember.id);
     setIsRoomConnectionLost(false);
@@ -1651,6 +1653,7 @@ export default function Home() {
     setFiles([]);
     setPrivateAiResults([]);
     setFilePreview(null);
+    setIsAiPanelOpen(false);
     setStage("auth");
     setAuthStatus("已退出账户。");
     setRoomStatus("");
@@ -1722,6 +1725,7 @@ export default function Home() {
     setFiles(record.files);
     setPrivateAiResults(record.aiResults);
     setFilePreview(null);
+    setIsAiPanelOpen(Boolean(record.aiResults.length));
     setActiveViewerId(currentMember.id);
     setRoomStatus(`正在查看 ${record.endedAt} 保存的历史记录。`);
   }
@@ -1736,6 +1740,7 @@ export default function Home() {
     setCurrentRoomId(null);
     setRoomMembers(null);
     setFilePreview(null);
+    setIsAiPanelOpen(false);
     setRoomStatus(status);
   }
 
@@ -2480,6 +2485,7 @@ export default function Home() {
         },
         ...current,
       ]);
+      setIsAiPanelOpen(true);
 
       setRoomStatus(
         data.source === "deepseek"
@@ -2641,6 +2647,7 @@ export default function Home() {
         },
         ...current,
       ]);
+      setIsAiPanelOpen(true);
 
       setRoomStatus(
         fileSummary.source === "deepseek"
@@ -3150,6 +3157,12 @@ export default function Home() {
                 {isSummarizing ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
                 {isSummarizing ? copy.summarizing : copy.summarize}
               </button>
+              {privateAiResults.length ? (
+                <button className="summary-action" onClick={() => setIsAiPanelOpen(true)} type="button">
+                  <Sparkles size={18} />
+                  {copy.myAiResults}
+                </button>
+              ) : null}
               <button className="text-button end-action" onClick={endDiscussion} type="button">
                 {copy.endAndSave}
               </button>
@@ -3169,7 +3182,7 @@ export default function Home() {
         </div>
       ) : null}
 
-      <section className={filePreview || privateAiResults.length ? "room-grid has-side-panel" : "room-grid chat-only"}>
+      <section className={filePreview ? "room-grid has-side-panel" : "room-grid chat-only"}>
         <div className="chat-area">
           <div className="message-list">
             {messages.map((message) => {
@@ -3388,40 +3401,53 @@ export default function Home() {
           )}
         </div>
 
-        {filePreview || privateAiResults.length ? (
+        {filePreview ? (
         <aside className="side-panel">
-          {filePreview ? (
-            <section className="private-ai-section">
-              <div className="side-title-row">
-                <p className="label">{copy.filePreview}</p>
-                <button className="mini-action" onClick={() => setFilePreview(null)} type="button">
-                  {copy.close}
-                </button>
-              </div>
-              <article className="private-ai-card">
-                <strong>{filePreview.fileName}</strong>
-                {filePreview.imageUrl ? (
-                  // Blob URLs from user-selected local files cannot be optimized by next/image.
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img className="file-preview-image" src={filePreview.imageUrl} alt={filePreview.fileName} />
-                ) : null}
-                {filePreview.documentUrl && !filePreview.imageUrl ? (
-                  <>
-                    <iframe className="file-preview-document" src={filePreview.documentUrl} title={filePreview.fileName} />
-                    <a className="mini-action file-open-link" href={filePreview.documentUrl} rel="noreferrer" target="_blank">
-                      {copy.openOriginalFile}
-                    </a>
-                  </>
-                ) : null}
-                <p>{filePreview.text}</p>
-              </article>
-            </section>
-          ) : null}
+          <section className="private-ai-section">
+            <div className="side-title-row">
+              <p className="label">{copy.filePreview}</p>
+              <button className="mini-action" onClick={() => setFilePreview(null)} type="button">
+                {copy.close}
+              </button>
+            </div>
+            <article className="private-ai-card">
+              <strong>{filePreview.fileName}</strong>
+              {filePreview.imageUrl ? (
+                // Blob URLs from user-selected local files cannot be optimized by next/image.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img className="file-preview-image" src={filePreview.imageUrl} alt={filePreview.fileName} />
+              ) : null}
+              {filePreview.documentUrl && !filePreview.imageUrl ? (
+                <>
+                  <iframe className="file-preview-document" src={filePreview.documentUrl} title={filePreview.fileName} />
+                  <a className="mini-action file-open-link" href={filePreview.documentUrl} rel="noreferrer" target="_blank">
+                    {copy.openOriginalFile}
+                  </a>
+                </>
+              ) : null}
+              <p>{filePreview.text}</p>
+            </article>
+          </section>
+        </aside>
+        ) : null}
+      </section>
 
-          {privateAiResults.length ? (
-            <section className="private-ai-section">
-              <p className="label">{copy.myAiResults}</p>
-              <div className="private-ai-list">
+      {isAiPanelOpen ? (
+        <div className="history-overlay" role="dialog" aria-modal="true" aria-label={copy.myAiResults}>
+          <button className="history-backdrop" onClick={() => setIsAiPanelOpen(false)} type="button" />
+          <section className="history-panel history-modal ai-results-modal">
+            <div className="side-title-row">
+              <div>
+                <p className="label">{copy.myAiResults}</p>
+                <small>{privateAiResults.length ? `${privateAiResults.length}` : "0"}</small>
+              </div>
+              <button className="mini-action" onClick={() => setIsAiPanelOpen(false)} type="button">
+                {copy.close}
+              </button>
+            </div>
+
+            {privateAiResults.length ? (
+              <div className="private-ai-list ai-results-list">
                 {privateAiResults.map((result) => (
                   <article className="private-ai-card" key={result.id}>
                     <div className="private-ai-head">
@@ -3438,11 +3464,12 @@ export default function Home() {
                   </article>
                 ))}
               </div>
-            </section>
-          ) : null}
-        </aside>
-        ) : null}
-      </section>
+            ) : (
+              <p className="empty-history">{copy.myAiResults}</p>
+            )}
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
