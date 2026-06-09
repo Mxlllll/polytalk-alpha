@@ -762,6 +762,11 @@ input:hover {
   animation: msgIn 240ms var(--ease) both;
 }
 
+.message.voice-message {
+  width: fit-content;
+  max-width: min(78%, 420px);
+}
+
 .message.mine {
   align-self: flex-end;
 }
@@ -787,6 +792,22 @@ input:hover {
   background: var(--primary);
   border-color: rgba(255, 255, 255, 0.16);
   box-shadow: 0 18px 42px rgba(36, 34, 42, 0.18);
+}
+
+.message.voice-message .bubble {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.message.voice-message.mine .bubble {
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 .message.ai .bubble {
@@ -863,7 +884,7 @@ input:hover {
 
 .voice-card {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 2px;
   position: relative;
 }
@@ -878,39 +899,41 @@ input:hover {
 
 .voice-bar-wrap {
   position: relative;
-  width: min(310px, 100%);
+  width: min(var(--voice-width, 210px), calc(100vw - 96px));
+  min-width: 176px;
+  max-width: 320px;
 }
 
 .voice-bar {
   width: 100%;
-  min-height: 46px;
+  min-height: 42px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 10px;
-  border: 1px solid rgba(36, 34, 42, 0.08);
+  gap: 8px;
+  border: 1px solid rgba(36, 34, 42, 0.09);
   border-radius: 999px;
-  padding: 7px 12px 7px 8px;
+  padding: 6px 36px 6px 7px;
   color: var(--ink);
-  background: rgba(248, 247, 250, 0.88);
-  box-shadow: 0 12px 28px rgba(36, 34, 42, 0.07);
-  font-size: 13px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 28px rgba(36, 34, 42, 0.08);
+  font-size: 12px;
   font-weight: 850;
   user-select: none;
   touch-action: manipulation;
 }
 
 .message.mine .voice-bar {
-  color: white;
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.12);
-  box-shadow: none;
+  color: var(--ink);
+  border-color: rgba(36, 34, 42, 0.1);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 12px 28px rgba(36, 34, 42, 0.09);
 }
 
 .voice-icon {
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -920,17 +943,17 @@ input:hover {
 }
 
 .message.mine .voice-icon {
-  color: white;
-  background: rgba(255, 255, 255, 0.18);
+  color: var(--primary);
+  background: rgba(201, 184, 255, 0.42);
 }
 
 .voice-wave {
   flex: 1;
-  min-width: 64px;
+  min-width: 42px;
   display: flex;
   align-items: center;
-  gap: 4px;
-  opacity: 0.56;
+  gap: 3px;
+  opacity: 0.42;
 }
 
 .voice-wave i {
@@ -951,24 +974,25 @@ input:hover {
 
 .voice-more-button {
   position: absolute;
-  right: -8px;
-  bottom: -9px;
-  width: 30px;
-  height: 30px;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--ink-soft);
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 8px 18px rgba(36, 34, 42, 0.08);
+  background: rgba(248, 247, 250, 0.92);
+  box-shadow: none;
 }
 
 .message.mine .voice-more-button {
-  color: white;
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.14);
+  color: var(--ink-soft);
+  border-color: rgba(36, 34, 42, 0.08);
+  background: rgba(248, 247, 250, 0.92);
 }
 
 .voice-menu {
@@ -1004,14 +1028,26 @@ input:hover {
 }
 
 .voice-transcript {
-  max-width: 100%;
-  margin-top: 3px;
-  border-top: 1px solid rgba(36, 34, 42, 0.06);
-  padding-top: 10px;
+  max-width: min(420px, calc(100vw - 84px));
+  border: 1px solid rgba(36, 34, 42, 0.06);
+  border-radius: 18px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 10px 24px rgba(36, 34, 42, 0.06);
+}
+
+.voice-transcript .main-text {
+  margin-bottom: 5px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.voice-transcript .secondary-text {
+  font-size: 11px;
 }
 
 .message.mine .voice-transcript {
-  border-top-color: rgba(255, 255, 255, 0.16);
+  border-color: rgba(36, 34, 42, 0.06);
 }
 
 .file-chip {

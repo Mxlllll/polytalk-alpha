@@ -290,7 +290,6 @@ const uiCopy: Record<
     voiceTitle: string;
     voiceUnsupported: string;
     retranscribeVoice: string;
-    summarizeVoice: string;
     transcribeTo: (language: string) => string;
     endAndSave: string;
     defaultRoomTitle: (date: string) => string;
@@ -341,7 +340,6 @@ const uiCopy: Record<
     voiceTitle: "按住说话，松开发送",
     voiceUnsupported: "当前浏览器不支持录音",
     retranscribeVoice: "重新转写",
-    summarizeVoice: "总结语音",
     transcribeTo: (languageName) => `转成${languageName}`,
     endAndSave: "结束并保存",
     defaultRoomTitle: (date) => `课堂讨论 ${date}`,
@@ -391,7 +389,6 @@ const uiCopy: Record<
     voiceTitle: "누르고 말한 뒤 놓으면 전송됩니다",
     voiceUnsupported: "현재 브라우저는 녹음을 지원하지 않습니다",
     retranscribeVoice: "다시 변환",
-    summarizeVoice: "음성 요약",
     transcribeTo: (languageName) => `${languageName}로 변환`,
     endAndSave: "종료하고 저장",
     defaultRoomTitle: (date) => `수업 토론 ${date}`,
@@ -441,7 +438,6 @@ const uiCopy: Record<
     voiceTitle: "Hold to talk, release to send",
     voiceUnsupported: "Recording is not supported in this browser",
     retranscribeVoice: "Retranscribe",
-    summarizeVoice: "Summarize voice",
     transcribeTo: (languageName) => `Transcribe to ${languageName}`,
     endAndSave: "End and save",
     defaultRoomTitle: (date) => `Class discussion ${date}`,
@@ -1046,6 +1042,7 @@ export default function Home() {
         body: JSON.stringify({
           action: "sync",
           roomId,
+          joinCode: roomCode,
           member,
           memberCount: memberCountRef.current,
           messageCount: messageCountRef.current,
@@ -1093,7 +1090,7 @@ export default function Home() {
       setActiveViewerId(member.id);
       return data.room;
     },
-    [currentMember],
+    [currentMember, roomCode],
   );
 
   useEffect(() => {
@@ -1158,6 +1155,11 @@ export default function Home() {
 
       demoSyncInFlightRef.current = true;
       syncDemoRoom(currentRoomId)
+        .then(() => {
+          setRoomStatus((current) =>
+            current === "公开测试房间同步失败，请刷新后再试。" ? "" : current,
+          );
+        })
         .catch((error) => {
           console.error(error);
           setRoomStatus("公开测试房间同步失败，请刷新后再试。");
@@ -2059,56 +2061,6 @@ export default function Home() {
     }
   }
 
-  async function summarizeVoiceMessage(message: Message) {
-    const voiceText = isVoiceTranscriptReady(message) ? message.originalText : await transcribeVoiceMessage(message, message.originalLanguage);
-
-    setIsSummarizing(true);
-    setRoomStatus("正在总结这条语音...");
-
-    try {
-      const response = await fetch("/api/ai/summarize", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messages: [
-            {
-              senderName: members.find((member) => member.id === message.senderId)?.name ?? "Voice",
-              originalLanguage: message.originalLanguage,
-              originalText: voiceText,
-            },
-          ],
-        }),
-      });
-
-      if (!response.ok) throw new Error("Voice summary request failed");
-
-      const data = (await response.json()) as {
-        summary: Record<Language, string>;
-        source: "deepseek" | "mock";
-      };
-
-      setPrivateAiResults((current) => [
-        {
-          id: crypto.randomUUID(),
-          kind: "discussion_summary",
-          title: "语音总结",
-          summary: data.summary,
-          source: data.source,
-          createdAt: nowLabel(),
-        },
-        ...current,
-      ]);
-      setRoomStatus("语音总结已生成，只在你的 AI 结果里可见。");
-    } catch (error) {
-      console.error(error);
-      setRoomStatus("语音总结失败，请稍后再试。");
-    } finally {
-      setIsSummarizing(false);
-    }
-  }
-
   async function transcribeVoiceMessage(message: Message, targetLanguage: Language) {
     if (!message.voiceUrl) {
       setRoomStatus("这条语音没有可读取的音频，无法重新转写。");
@@ -2897,7 +2849,7 @@ export default function Home() {
               const reactorId = isPublicDemoRoom ? currentMember.id : activeViewer.id;
 
               return (
-                <article className={`message ${isMine ? "mine" : ""} ${isAi ? "ai" : ""}`} key={message.id}>
+                <article className={`message ${isMine ? "mine" : ""} ${isAi ? "ai" : ""} ${message.kind === "voice" ? "voice-message" : ""}`} key={message.id}>
                   <p className="message-meta">
                     {isAi ? "AI" : sender?.name} · {message.createdAt}
                     {message.isPending ? ` · ${copy.translating}` : ""}
@@ -2935,7 +2887,14 @@ export default function Home() {
                                 src={message.voiceUrl}
                               />
                             ) : null}
-                            <div className="voice-bar-wrap">
+                            <div
+                              className="voice-bar-wrap"
+                              style={
+                                {
+                                  "--voice-width": `${Math.min(300, 168 + (message.voiceDuration ?? 1) * 7)}px`,
+                                } as React.CSSProperties
+                              }
+                            >
                               <button
                                 aria-label="Voice message"
                                 className="voice-bar"
@@ -2975,9 +2934,6 @@ export default function Home() {
                                       {copy.transcribeTo(languageLabels[item])}
                                     </button>
                                   ))}
-                                  <button onClick={() => summarizeVoiceMessage(message)} type="button">
-                                    {copy.summarizeVoice}
-                                  </button>
                                 </div>
                               ) : null}
                             </div>
@@ -3010,7 +2966,7 @@ export default function Home() {
                         </button>
                       </div>
                     ) : null}
-                    {!message.isPending ? (
+                    {!message.isPending && message.kind !== "voice" ? (
                       <div className="reaction-row" aria-label="Message reactions">
                         {reactionOptions.map((reaction) => {
                           const users = message.reactions?.[reaction.key] ?? [];

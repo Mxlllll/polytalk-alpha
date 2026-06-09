@@ -141,10 +141,18 @@ async function findPersistentRoom(body: DemoRoomRequestBody) {
   const supabase = createDemoSupabaseClient();
   if (!supabase) return null;
 
-  const query = supabase.from("demo_rooms").select("*").limit(1);
-  const request = body.roomId ? query.eq("id", body.roomId) : query.eq("join_code", normalizeJoinCode(body.joinCode));
-  const { data, error } = await request.maybeSingle<DemoRoomRecord>();
+  if (body.roomId) {
+    const { data, error } = await supabase.from("demo_rooms").select("*").eq("id", body.roomId).maybeSingle<DemoRoomRecord>();
+    if (error) throw error;
+    if (data) return roomFromRecord(data);
+  }
 
+  if (!body.joinCode) return null;
+  const { data, error } = await supabase
+    .from("demo_rooms")
+    .select("*")
+    .eq("join_code", normalizeJoinCode(body.joinCode))
+    .maybeSingle<DemoRoomRecord>();
   if (error) throw error;
   return data ? roomFromRecord(data) : null;
 }
@@ -168,9 +176,9 @@ async function savePersistentRoom(room: DemoRoom) {
 }
 
 function findMemoryRoom(body: DemoRoomRequestBody) {
-  return body.roomId
-    ? store.rooms.get(body.roomId)
-    : [...store.rooms.values()].find((item) => normalizeJoinCode(item.joinCode) === normalizeJoinCode(body.joinCode));
+  const roomById = body.roomId ? store.rooms.get(body.roomId) : undefined;
+  if (roomById) return roomById;
+  return [...store.rooms.values()].find((item) => normalizeJoinCode(item.joinCode) === normalizeJoinCode(body.joinCode));
 }
 
 type DemoRoomRequestBody = {
