@@ -3539,7 +3539,6 @@ export default function Home() {
             <div className="brand-row auth-brand">
               <div className="brand-mark" aria-hidden="true" />
               <div>
-                <p className="eyebrow">AI Study Room</p>
                 <h1>폴리톡</h1>
               </div>
             </div>
@@ -3694,7 +3693,6 @@ export default function Home() {
           <div className="brand-row">
             <div className="brand-mark" aria-hidden="true" />
             <div>
-              <p className="eyebrow">AI Study Room</p>
               <h1>PolyTalk</h1>
             </div>
           </div>
@@ -3827,7 +3825,6 @@ export default function Home() {
         <section className="panel lobby-panel">
           <header className="split-head">
             <div>
-              <p className="eyebrow">AI Study Room</p>
               <h1>{roomChoice.title}</h1>
               <p className="lobby-subtitle">{roomChoice.subtitle}</p>
             </div>
