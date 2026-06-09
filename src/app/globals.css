@@ -71,7 +71,8 @@ body::before {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -85,7 +86,8 @@ button:disabled {
 }
 
 button,
-input {
+input,
+select {
   transition:
     border-color 180ms var(--ease),
     background-color 180ms var(--ease),
@@ -100,7 +102,8 @@ button:not(:disabled):where(:hover, :focus-visible) {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 4px rgba(201, 184, 255, 0.28);
 }
@@ -179,6 +182,21 @@ input:focus-visible {
   animation: fadeUp 360ms var(--ease) both;
 }
 
+.auth-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 28px;
+  animation: fadeUp 360ms var(--ease) both;
+}
+
+.auth-brand {
+  justify-content: flex-start;
+  margin-bottom: 0;
+  animation: none;
+}
+
 .brand-mark {
   width: 60px;
   height: 60px;
@@ -244,6 +262,42 @@ label span {
   font-weight: 780;
 }
 
+.language-menu {
+  width: auto;
+  min-width: 132px;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.language-menu span {
+  color: rgba(119, 113, 127, 0.72);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.language-menu select {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 34px 0 14px;
+  color: var(--ink-soft);
+  background:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%) calc(100% - 18px) 16px / 6px 6px no-repeat,
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%) calc(100% - 14px) 16px / 6px 6px no-repeat,
+    rgba(248, 247, 250, 0.88);
+  appearance: none;
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.language-menu select:hover {
+  border-color: var(--line-strong);
+  background-color: rgba(255, 255, 255, 0.96);
+}
+
 input {
   width: 100%;
   min-height: 52px;
@@ -253,6 +307,10 @@ input {
   color: var(--ink);
   background: rgba(248, 247, 250, 0.9);
   font-size: 16px;
+}
+
+input::placeholder {
+  color: rgba(160, 154, 170, 0.72);
 }
 
 input:hover {
@@ -284,6 +342,79 @@ input:hover {
   color: white;
   background: var(--primary);
   box-shadow: 0 12px 24px rgba(36, 34, 42, 0.14);
+}
+
+.auth-tabs,
+.auth-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-tabs {
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(248, 247, 250, 0.96);
+}
+
+.auth-tabs button {
+  flex: 1;
+  min-height: 40px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.auth-tabs button.active {
+  color: white;
+  background: var(--primary);
+  box-shadow: 0 12px 24px rgba(36, 34, 42, 0.14);
+}
+
+.auth-helper {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.auth-actions {
+  flex-wrap: wrap;
+}
+
+.auth-actions .text-button {
+  flex: 1 1 150px;
+}
+
+.password-strength {
+  display: grid;
+  gap: 8px;
+  margin-top: -6px;
+}
+
+.password-meter {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.password-meter span {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(160, 154, 170, 0.28);
+}
+
+.password-meter span.active {
+  background: var(--primary);
+}
+
+.password-strength small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .primary-action,
@@ -498,13 +629,14 @@ input:hover {
 }
 
 .history-card {
+  position: relative;
   width: 100%;
   align-items: flex-start;
-  flex-direction: column;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 10px;
   border: 1px solid var(--line);
   border-radius: 18px;
-  padding: 13px;
+  padding: 10px;
   text-align: left;
   color: var(--ink-soft);
   background: rgba(248, 247, 250, 0.72);
@@ -515,17 +647,53 @@ input:hover {
   background: white;
 }
 
-.history-card strong {
+.history-card-main {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 6px;
+  border: 0;
+  padding: 3px;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.history-card-main:hover {
+  transform: none;
+}
+
+.history-card-main strong {
   color: var(--ink);
   font-size: 14px;
 }
 
-.history-card span,
-.history-card small,
+.history-card-main span,
+.history-card-main small,
 .empty-history {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.history-delete-button {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 214, 200, 0.74);
+  border-radius: 999px;
+  color: #8b4a3a;
+  background: rgba(255, 214, 200, 0.42);
+  box-shadow: none;
+}
+
+.history-delete-button:hover {
+  border-color: rgba(255, 214, 200, 0.96);
+  background: rgba(255, 214, 200, 0.62);
 }
 
 .end-action {
@@ -846,6 +1014,7 @@ input:hover {
 .message.voice-message {
   width: fit-content;
   max-width: min(78%, 420px);
+  overflow: visible;
 }
 
 .message.mine {
@@ -878,6 +1047,7 @@ input:hover {
 }
 
 .message.voice-message .bubble {
+  overflow: visible;
   border: 0;
   border-radius: 0;
   padding: 0;
@@ -972,6 +1142,7 @@ input:hover {
   gap: 8px;
   margin-bottom: 2px;
   position: relative;
+  overflow: visible;
 }
 
 .message.mine .voice-card {
@@ -987,6 +1158,7 @@ input:hover {
   width: min(var(--voice-width, 210px), calc(100vw - 96px));
   min-width: 176px;
   max-width: 320px;
+  overflow: visible;
 }
 
 .voice-bar {
@@ -1082,7 +1254,7 @@ input:hover {
 
 .voice-menu {
   position: absolute;
-  z-index: 5;
+  z-index: 60;
   right: 0;
   top: calc(100% + 10px);
   width: 190px;
@@ -1700,6 +1872,30 @@ input:hover {
   .brand-row {
     justify-content: flex-start;
     gap: 13px;
+  }
+
+  .auth-top {
+    align-items: center;
+    gap: 12px;
+  }
+
+  .auth-brand {
+    min-width: 0;
+  }
+
+  .language-menu {
+    min-width: 112px;
+  }
+
+  .language-menu span {
+    font-size: 9px;
+  }
+
+  .language-menu select {
+    min-height: 36px;
+    padding-right: 30px;
+    padding-left: 12px;
+    font-size: 12px;
   }
 
   .brand-mark {

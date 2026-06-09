@@ -9,7 +9,7 @@ alter table public.messages
 
 alter table public.messages
   add constraint messages_kind_check
-  check (kind in ('text', 'voice', 'file_summary', 'discussion_summary'));
+  check (kind in ('text', 'voice', 'file', 'file_summary', 'discussion_summary'));
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

@@ -15,6 +15,7 @@ import {
   Plus,
   Send,
   Sparkles,
+  Trash2,
   Users,
 } from "lucide-react";
 import { createSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase/client";
@@ -22,6 +23,7 @@ import { buildMockTranslations } from "@/lib/ai/mock";
 
 type Language = "zh" | "ko" | "en";
 type Stage = "home" | "auth" | "lobby" | "room";
+type AuthMode = "signIn" | "signUp" | "forgot" | "reset" | "change";
 type FileSummaryMode = "course" | "assignment";
 type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
 type MessageReactions = Partial<Record<ReactionKey, string[]>>;
@@ -76,7 +78,7 @@ type Message = {
 type DbMessageRow = {
   id: string;
   sender_id: string;
-  kind: "text" | "voice" | "file_summary" | "discussion_summary";
+  kind: "text" | "voice" | "file" | "file_summary" | "discussion_summary";
   original_language: Language;
   original_text: string;
   translations: Partial<Record<Language, string>>;
@@ -134,13 +136,28 @@ type FilePreview = {
 
 type HistoryRecord = {
   id: string;
+  roomId?: string | null;
   title: string;
   joinCode: string;
   endedAt: string;
+  endedAtIso?: string;
   members: Member[];
   messages: Message[];
   files: string[];
   aiResults: PrivateAiResult[];
+};
+
+type DbHistoryRecordRow = {
+  id: string;
+  owner_id: string;
+  room_id: string | null;
+  title: string;
+  join_code: string;
+  ended_at: string;
+  members: Member[];
+  messages: Message[];
+  files: string[];
+  ai_results: PrivateAiResult[];
 };
 
 type LocalAlphaAccount = {
@@ -165,6 +182,13 @@ type DemoRoomApiResponse = {
     updatedAt?: number;
   };
   error?: string;
+};
+
+type DbRoomRow = {
+  id: string;
+  title: string;
+  join_code: string;
+  created_by: string;
 };
 
 type DemoRoomRealtimeRow = {
@@ -320,8 +344,6 @@ const uiCopy: Record<
     signUp: string;
     signIn: string;
     checkingSession: string;
-    skipChecking: string;
-    demoWorkspace: string;
     verifiedEmail: string;
     lobbyTitle: string;
     switchIdentity: string;
@@ -363,16 +385,14 @@ const uiCopy: Record<
   }
 > = {
   zh: {
-    schoolEmail: "学校邮箱",
+    schoolEmail: "邮箱",
     alphaPassword: "Alpha 密码",
     displayName: "显示名称",
     myLanguage: "我的母语",
     signUp: "注册 Alpha 账号",
     signIn: "登录 Alpha 账号",
     checkingSession: "正在检查登录状态",
-    skipChecking: "跳过检查，进入演示工作台",
-    demoWorkspace: "进入演示工作台",
-    verifiedEmail: "已验证学校邮箱",
+    verifiedEmail: "已验证邮箱",
     lobbyTitle: "创建或加入讨论房间",
     switchIdentity: "切换身份",
     newRoom: "新建房间",
@@ -412,16 +432,14 @@ const uiCopy: Record<
     seesFirst: (count, name, languageName) => `${count} 位成员 · ${name} 优先看 ${languageName}`,
   },
   ko: {
-    schoolEmail: "학교 이메일",
+    schoolEmail: "이메일",
     alphaPassword: "Alpha 비밀번호",
     displayName: "표시 이름",
     myLanguage: "내 모국어",
     signUp: "Alpha 계정 만들기",
     signIn: "Alpha 로그인",
     checkingSession: "로그인 상태 확인 중",
-    skipChecking: "확인을 건너뛰고 데모로 이동",
-    demoWorkspace: "데모 작업 공간으로 이동",
-    verifiedEmail: "학교 이메일 인증 완료",
+    verifiedEmail: "이메일 인증 완료",
     lobbyTitle: "토론방 만들기 또는 참여",
     switchIdentity: "사용자 전환",
     newRoom: "새 방",
@@ -461,16 +479,14 @@ const uiCopy: Record<
     seesFirst: (count, name, languageName) => `${count}명 · ${name}님은 ${languageName}을 먼저 봅니다`,
   },
   en: {
-    schoolEmail: "School email",
+    schoolEmail: "Email",
     alphaPassword: "Alpha password",
     displayName: "Display name",
     myLanguage: "My primary language",
     signUp: "Create Alpha account",
     signIn: "Sign in to Alpha",
     checkingSession: "Checking session",
-    skipChecking: "Skip check and enter demo",
-    demoWorkspace: "Enter demo workspace",
-    verifiedEmail: "Verified school email",
+    verifiedEmail: "Verified email",
     lobbyTitle: "Create or join a discussion room",
     switchIdentity: "Switch identity",
     newRoom: "New room",
@@ -515,6 +531,8 @@ const homeCopy: Record<
   Language,
   {
     close: string;
+    deleteHistory: string;
+    deleteHistoryConfirm: string;
     displayName: string;
     history: string;
     historyEmpty: string;
@@ -531,13 +549,15 @@ const homeCopy: Record<
 > = {
   zh: {
     close: "关闭",
+    deleteHistory: "删除历史",
+    deleteHistoryConfirm: "确定删除这条历史记录吗？这不会删除原房间里的聊天数据。",
     displayName: "显示名称",
     history: "历史记录",
     historyEmpty: "结束一次讨论后，这里会保存完整聊天、文件和 AI 结果。",
     historyMeta: (messages, files, aiResults) => `${messages} 条消息 · ${files} 个文件 · ${aiResults} 个 AI 结果`,
     historySubtitle: "查看之前保存的课堂讨论",
     join: "加入",
-    login: "学校邮箱登录",
+    login: "邮箱登录",
     logout: "退出账户",
     accountLabel: "当前账户",
     primaryLanguage: "我的母语",
@@ -546,13 +566,15 @@ const homeCopy: Record<
   },
   ko: {
     close: "닫기",
+    deleteHistory: "기록 삭제",
+    deleteHistoryConfirm: "이 기록을 삭제할까요? 원래 방의 채팅 데이터는 삭제되지 않습니다.",
     displayName: "표시 이름",
     history: "기록",
     historyEmpty: "토론이 끝나면 전체 채팅, 파일, AI 결과가 여기에 저장됩니다.",
     historyMeta: (messages, files, aiResults) => `${messages}개 메시지 · ${files}개 파일 · ${aiResults}개 AI 결과`,
     historySubtitle: "저장된 수업 토론 보기",
     join: "참여",
-    login: "학교 이메일 로그인",
+    login: "이메일 로그인",
     logout: "로그아웃",
     accountLabel: "현재 계정",
     primaryLanguage: "내 모국어",
@@ -561,18 +583,121 @@ const homeCopy: Record<
   },
   en: {
     close: "Close",
+    deleteHistory: "Delete history",
+    deleteHistoryConfirm: "Delete this history record? This will not delete the original room chat data.",
     displayName: "Display name",
     history: "History",
     historyEmpty: "After a discussion ends, full chat, files, and AI results will be saved here.",
     historyMeta: (messages, files, aiResults) => `${messages} messages · ${files} files · ${aiResults} AI results`,
     historySubtitle: "Review saved class discussions",
     join: "Join",
-    login: "School email login",
+    login: "Email login",
     logout: "Sign out",
     accountLabel: "Current account",
     primaryLanguage: "My primary language",
     start: "Start discussion",
     startSubtitle: "Next, create a code or enter one to join",
+  },
+};
+
+const authCopy: Record<
+  Language,
+  {
+    changePassword: string;
+    confirmPassword: string;
+    confirmPasswordPlaceholder: string;
+    displayNamePlaceholder: string;
+    emailPlaceholder: string;
+    forgotPassword: string;
+    forgotSubtitle: string;
+    loginTab: string;
+    newPasswordPlaceholder: string;
+    passwordHint: string;
+    passwordPlaceholder: string;
+    passwordMismatch: string;
+    passwordResetSent: string;
+    registerTab: string;
+    resendReset: string;
+    resetPassword: string;
+    resetSubtitle: string;
+    sendResetEmail: string;
+    setNewPassword: string;
+    strongPassword: string;
+    updatePassword: string;
+    weakPassword: string;
+  }
+> = {
+  zh: {
+    changePassword: "修改密码",
+    confirmPassword: "确认新密码",
+    confirmPasswordPlaceholder: "再次输入新密码",
+    displayNamePlaceholder: "输入你的显示名称",
+    emailPlaceholder: "输入邮箱",
+    forgotPassword: "忘记密码",
+    forgotSubtitle: "输入邮箱，我们会发送重置密码邮件。",
+    loginTab: "登录",
+    newPasswordPlaceholder: "输入新密码",
+    passwordHint: "至少 8 位，建议包含大小写字母、数字和符号。",
+    passwordPlaceholder: "输入密码",
+    passwordMismatch: "两次输入的新密码不一致。",
+    passwordResetSent: "重置邮件已发送，请打开邮箱继续操作。",
+    registerTab: "注册",
+    resendReset: "重新发送重置邮件",
+    resetPassword: "重置密码",
+    resetSubtitle: "设置一个更强的新密码后即可继续使用。",
+    sendResetEmail: "发送重置邮件",
+    setNewPassword: "新密码",
+    strongPassword: "密码强度足够",
+    updatePassword: "更新密码",
+    weakPassword: "密码强度不足",
+  },
+  ko: {
+    changePassword: "비밀번호 변경",
+    confirmPassword: "새 비밀번호 확인",
+    confirmPasswordPlaceholder: "새 비밀번호를 다시 입력",
+    displayNamePlaceholder: "표시 이름 입력",
+    emailPlaceholder: "이메일 입력",
+    forgotPassword: "비밀번호 찾기",
+    forgotSubtitle: "이메일을 입력하면 재설정 메일을 보내드립니다.",
+    loginTab: "로그인",
+    newPasswordPlaceholder: "새 비밀번호 입력",
+    passwordHint: "8자 이상, 대문자/소문자/숫자/기호 조합을 권장합니다.",
+    passwordPlaceholder: "비밀번호 입력",
+    passwordMismatch: "새 비밀번호가 서로 일치하지 않습니다.",
+    passwordResetSent: "재설정 메일을 보냈습니다. 이메일을 확인해 주세요.",
+    registerTab: "가입",
+    resendReset: "재설정 메일 다시 보내기",
+    resetPassword: "비밀번호 재설정",
+    resetSubtitle: "더 안전한 새 비밀번호를 설정한 뒤 계속 사용할 수 있습니다.",
+    sendResetEmail: "재설정 메일 보내기",
+    setNewPassword: "새 비밀번호",
+    strongPassword: "비밀번호 강도 충분",
+    updatePassword: "비밀번호 업데이트",
+    weakPassword: "비밀번호 강도 부족",
+  },
+  en: {
+    changePassword: "Change password",
+    confirmPassword: "Confirm new password",
+    confirmPasswordPlaceholder: "Enter new password again",
+    displayNamePlaceholder: "Enter your display name",
+    emailPlaceholder: "Enter email",
+    forgotPassword: "Forgot password",
+    forgotSubtitle: "Enter your email and we will send a reset link.",
+    loginTab: "Sign in",
+    newPasswordPlaceholder: "Enter new password",
+    passwordHint: "Use 8+ characters with a mix of cases, numbers, and symbols.",
+    passwordPlaceholder: "Enter password",
+    passwordMismatch: "The new passwords do not match.",
+    passwordResetSent: "Password reset email sent. Please check your inbox.",
+    registerTab: "Create account",
+    resendReset: "Send reset email again",
+    resetPassword: "Reset password",
+    resetSubtitle: "Set a stronger new password to continue.",
+    sendResetEmail: "Send reset email",
+    setNewPassword: "New password",
+    strongPassword: "Password is strong enough",
+    updatePassword: "Update password",
+    weakPassword: "Password is too weak",
   },
 };
 
@@ -593,7 +718,7 @@ const roomChoiceCopy: Record<
 > = {
   zh: {
     back: "返回首页",
-    create: "创建口令",
+    create: "创建房间",
     createDescription: "生成一个 4 位面对面口令，让同学输入同一个口令加入。",
     createTitle: "我来创建讨论",
     join: "加入讨论",
@@ -605,7 +730,7 @@ const roomChoiceCopy: Record<
   },
   ko: {
     back: "홈으로",
-    create: "코드 만들기",
+    create: "방 만들기",
     createDescription: "4자리 대면 코드를 만들어 같은 방에 참여할 수 있게 합니다.",
     createTitle: "토론 만들기",
     join: "토론 참여",
@@ -617,7 +742,7 @@ const roomChoiceCopy: Record<
   },
   en: {
     back: "Back home",
-    create: "Create code",
+    create: "Create room",
     createDescription: "Generate a 4-digit face-to-face code so classmates can join the same room.",
     createTitle: "Create a discussion",
     join: "Join discussion",
@@ -757,12 +882,19 @@ function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
-function validateAuthFields(email: string, password: string, displayName?: string) {
-  const normalizedEmail = normalizeEmail(email);
+function validateEmail(value: string) {
+  const normalizedEmail = normalizeEmail(value);
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     return "请输入有效的邮箱地址。";
   }
+
+  return "";
+}
+
+function validateAuthFields(email: string, password: string, displayName?: string) {
+  const emailMessage = validateEmail(email);
+  if (emailMessage) return emailMessage;
 
   if (password.length < 6) {
     return "密码至少需要 6 位。";
@@ -770,6 +902,30 @@ function validateAuthFields(email: string, password: string, displayName?: strin
 
   if (displayName !== undefined && !displayName.trim()) {
     return "请输入显示名称。";
+  }
+
+  return "";
+}
+
+function passwordStrength(password: string) {
+  const checks = [
+    password.length >= 8,
+    /[A-Z]/.test(password),
+    /[a-z]/.test(password),
+    /\d/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ];
+  const score = checks.filter(Boolean).length;
+
+  return {
+    score,
+    isStrongEnough: score >= 4,
+  };
+}
+
+function validateStrongPassword(password: string) {
+  if (!passwordStrength(password).isStrongEnough) {
+    return "密码至少 8 位，并包含大小写字母、数字或符号中的多种组合。";
   }
 
   return "";
@@ -827,6 +983,33 @@ function saveLocalHistory(userId: string, records: HistoryRecord[]) {
   window.localStorage.setItem(historyStorageKey(userId), JSON.stringify(records.slice(0, 20)));
 }
 
+function formatHistoryEndedAt(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function historyRecordFromDbRow(row: DbHistoryRecordRow): HistoryRecord {
+  return {
+    id: row.id,
+    roomId: row.room_id,
+    title: row.title,
+    joinCode: row.join_code,
+    endedAt: formatHistoryEndedAt(row.ended_at),
+    endedAtIso: row.ended_at,
+    members: row.members ?? [],
+    messages: row.messages ?? [],
+    files: row.files ?? [],
+    aiResults: row.ai_results ?? [],
+  };
+}
+
 function sanitizeStorageFileName(fileName: string) {
   const extension = fileName.includes(".") ? fileName.split(".").pop()?.replace(/[^a-zA-Z0-9]/g, "") : "";
   const baseName = fileName.replace(/\.[^/.]+$/, "");
@@ -844,6 +1027,26 @@ function sanitizeStorageFileName(fileName: string) {
 
 function attachmentFromRow(row: DbMessageRow) {
   return Array.isArray(row.attachments) ? row.attachments[0] : row.attachments;
+}
+
+function messageFromDbRow(row: DbMessageRow): Message {
+  const attachment = attachmentFromRow(row);
+
+  return {
+    id: row.id,
+    senderId: row.sender_id,
+    kind: row.kind,
+    originalLanguage: row.original_language,
+    originalText: row.original_text,
+    translations: row.translations,
+    attachmentId: row.attachment_id,
+    fileName: attachment?.file_name,
+    filePath: attachment?.file_path,
+    fileType: attachment?.file_type,
+    voiceUrl: row.voice_url ?? undefined,
+    voiceDuration: row.voice_duration ?? undefined,
+    createdAt: new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  };
 }
 
 function isInlinePreviewFile(fileName: string, fileType?: string | null) {
@@ -908,14 +1111,19 @@ export default function Home() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const supabaseConfigured = useMemo(() => isSupabaseConfigured(), []);
   const [stage, setStage] = useState<Stage>("auth");
-  const [email, setEmail] = useState("mina@yonsei.ac.kr");
-  const [password, setPassword] = useState("polytalk123");
-  const [displayName, setDisplayName] = useState("Mina");
+  const [authMode, setAuthMode] = useState<AuthMode>("signIn");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [language, setLanguage] = useState<Language>("zh");
   const [authStatus, setAuthStatus] = useState("");
-  const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [, setIsCheckingSession] = useState(true);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [sessionUserId, setSessionUserId] = useState<string | null>(null);
+  const [loginFailureCount, setLoginFailureCount] = useState(0);
+  const [loginCooldownUntil, setLoginCooldownUntil] = useState(0);
+  const [authClock, setAuthClock] = useState(0);
   const [roomTitle, setRoomTitle] = useState("");
   const [roomCode, setRoomCode] = useState("");
   const [currentRoomId, setCurrentRoomId] = useState<string | null>(null);
@@ -955,6 +1163,7 @@ export default function Home() {
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>(() => loadLocalHistory(getOrCreateDemoUserId()));
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isHistoryView, setIsHistoryView] = useState(false);
+  const [isSavingHistory, setIsSavingHistory] = useState(false);
   const [roomDialog, setRoomDialog] = useState<"create" | "join" | null>(null);
   const [activeVoiceMenuId, setActiveVoiceMenuId] = useState<string | null>(null);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
@@ -993,7 +1202,10 @@ export default function Home() {
     members[0];
   const copy = uiCopy[stage === "room" ? activeViewer.language : language];
   const homeText = homeCopy[language];
+  const authText = authCopy[language];
   const historyOwnerId = sessionUserId ?? demoUserId;
+  const currentPasswordStrength = passwordStrength(password);
+  const loginCooldownRemaining = Math.max(0, Math.ceil((loginCooldownUntil - authClock) / 1000));
 
   const currentMember = useMemo<Member>(
     () => ({
@@ -1034,16 +1246,38 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!loginCooldownUntil) return;
+
+    const timer = window.setInterval(() => {
+      setAuthClock(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [loginCooldownUntil]);
+
+  useEffect(() => {
+    if (!authStatus) return;
+
+    const timer = window.setTimeout(() => {
+      setAuthStatus("");
+    }, 4200);
+
+    return () => window.clearTimeout(timer);
+  }, [authStatus]);
+
   const ensureProfile = useCallback(
     async (userId: string, userEmail = email) => {
       if (!userId || !supabaseConfigured) return;
 
-      await supabase.from("profiles").upsert({
+      const { error } = await supabase.from("profiles").upsert({
         id: userId,
         display_name: displayName || "Mina",
         school_email: userEmail,
         preferred_language: language,
       });
+
+      if (error) throw new Error(`Profile sync failed: ${error.message}`);
     },
     [displayName, email, language, supabase, supabaseConfigured],
   );
@@ -1119,27 +1353,7 @@ export default function Home() {
         return;
       }
 
-      setMessages(
-        ((data ?? []) as DbMessageRow[]).map((row) => {
-          const attachment = attachmentFromRow(row);
-
-          return {
-            id: row.id,
-            senderId: row.sender_id,
-            kind: row.kind,
-            originalLanguage: row.original_language,
-            originalText: row.original_text,
-            translations: row.translations,
-            attachmentId: row.attachment_id,
-            fileName: attachment?.file_name,
-            filePath: attachment?.file_path,
-            fileType: attachment?.file_type,
-            voiceUrl: row.voice_url ?? undefined,
-            voiceDuration: row.voice_duration ?? undefined,
-            createdAt: new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          };
-        }),
-      );
+      setMessages(((data ?? []) as DbMessageRow[]).map(messageFromDbRow));
     },
     [supabase],
   );
@@ -1181,6 +1395,74 @@ export default function Home() {
     [activeViewerId, sessionUserId, supabase],
   );
 
+  const loadDbHistory = useCallback(
+    async (ownerId: string) => {
+      if (!ownerId) return;
+
+      if (!supabaseConfigured) {
+        setHistoryRecords(loadLocalHistory(ownerId));
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("history_records")
+        .select("id, owner_id, room_id, title, join_code, ended_at, members, messages, files, ai_results")
+        .eq("owner_id", ownerId)
+        .order("ended_at", { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.error(error);
+        setHistoryRecords(loadLocalHistory(ownerId));
+        setRoomStatus(`读取历史记录失败：${error.message}`);
+        return;
+      }
+
+      const records = ((data ?? []) as DbHistoryRecordRow[]).map(historyRecordFromDbRow);
+      setHistoryRecords(records);
+      saveLocalHistory(ownerId, records);
+    },
+    [supabase, supabaseConfigured],
+  );
+
+  const saveDbHistory = useCallback(
+    async (record: HistoryRecord, ownerId: string) => {
+      if (!supabaseConfigured || !ownerId) return false;
+
+      const { error } = await supabase.from("history_records").upsert(
+        {
+          id: record.id,
+          owner_id: ownerId,
+          room_id: record.roomId ?? null,
+          title: record.title,
+          join_code: record.joinCode,
+          ended_at: record.endedAtIso ?? new Date().toISOString(),
+          members: record.members,
+          messages: record.messages,
+          files: record.files,
+          ai_results: record.aiResults,
+        },
+        { onConflict: "id" },
+      );
+
+      if (error) throw new Error(error.message);
+      return true;
+    },
+    [supabase, supabaseConfigured],
+  );
+
+  const deleteDbHistory = useCallback(
+    async (recordId: string, ownerId: string) => {
+      if (!supabaseConfigured || !ownerId) return false;
+
+      const { error } = await supabase.from("history_records").delete().eq("id", recordId).eq("owner_id", ownerId);
+
+      if (error) throw new Error(error.message);
+      return true;
+    },
+    [supabase, supabaseConfigured],
+  );
+
   const syncDemoRoom = useCallback(
     async (roomId: string, member = currentMember) => {
       const response = await fetch("/api/demo/rooms", {
@@ -1219,7 +1501,7 @@ export default function Home() {
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "messages",
           filter: `room_id=eq.${currentRoomId}`,
@@ -1231,24 +1513,18 @@ export default function Home() {
             return;
           }
 
+          const nextMessage = messageFromDbRow(row);
           setMessages((current) => {
-            if (current.some((message) => message.id === row.id)) return current;
+            const existingIndex = current.findIndex((message) => message.id === row.id);
+            if (existingIndex === -1) return [...current, nextMessage];
 
-            return [
-              ...current,
-              {
-                id: row.id,
-                senderId: row.sender_id,
-                kind: row.kind,
-                originalLanguage: row.original_language,
-                originalText: row.original_text,
-                translations: row.translations,
-                attachmentId: row.attachment_id,
-                voiceUrl: row.voice_url ?? undefined,
-                voiceDuration: row.voice_duration ?? undefined,
-                createdAt: new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              },
-            ];
+            const nextMessages = [...current];
+            nextMessages[existingIndex] = {
+              ...current[existingIndex],
+              ...nextMessage,
+              isPending: false,
+            };
+            return nextMessages;
           });
         },
       )
@@ -1397,6 +1673,7 @@ export default function Home() {
           setEmail(localAccount.email);
           setDisplayName(localAccount.displayName);
           setLanguage(localAccount.language);
+          setHistoryRecords(loadLocalHistory(localAccount.id));
           setAuthStatus("演示账号已登录，可以继续使用。");
           setStage("home");
         } else {
@@ -1409,6 +1686,31 @@ export default function Home() {
 
       try {
         const code = new URLSearchParams(window.location.search).get("code");
+        const searchType = new URLSearchParams(window.location.search).get("type");
+        const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        const hashType = hashParams.get("type");
+        const isRecoveryFlow = searchType === "recovery" || hashType === "recovery";
+        const recoveryAccessToken = hashParams.get("access_token");
+        const recoveryRefreshToken = hashParams.get("refresh_token");
+
+        if (isRecoveryFlow && recoveryAccessToken && recoveryRefreshToken) {
+          const { error } = await withTimeout(
+            supabase.auth.setSession({
+              access_token: recoveryAccessToken,
+              refresh_token: recoveryRefreshToken,
+            }),
+            6000,
+            "Recovery session",
+          );
+          window.history.replaceState({}, document.title, window.location.pathname);
+
+          if (error) {
+            setAuthMode("forgot");
+            setAuthStatus("重置链接已失效，请重新发送重置邮件。");
+            setStage("auth");
+            return;
+          }
+        }
 
         if (code) {
           const { error } = await withTimeout(supabase.auth.exchangeCodeForSession(code), 6000, "Email confirmation");
@@ -1418,29 +1720,83 @@ export default function Home() {
             setAuthStatus(`登录确认失败：${error.message}`);
             return;
           }
+
+          if (isRecoveryFlow) {
+            setAuthMode("reset");
+            setPassword("");
+            setConfirmPassword("");
+            setAuthStatus("邮箱已确认，请设置一个新的安全密码。");
+            setStage("auth");
+            return;
+          }
         }
 
         const { data } = await withTimeout(supabase.auth.getSession(), 5000, "Session check");
         const sessionEmail = data.session?.user.email;
 
         if (sessionEmail) {
-          setSessionUserId(data.session?.user.id ?? null);
-          setActiveViewerId(data.session?.user.id ?? "current-user");
+          const userId = data.session?.user.id ?? "";
+          setSessionUserId(userId || null);
+          setActiveViewerId(userId || "current-user");
           setEmail(sessionEmail);
-          await withTimeout(ensureProfile(data.session?.user.id ?? "", sessionEmail), 5000, "Profile sync");
+
+          if (isRecoveryFlow) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+            setAuthMode("reset");
+            setPassword("");
+            setConfirmPassword("");
+            setAuthStatus("邮箱已确认，请设置一个新的安全密码。");
+            setStage("auth");
+            return;
+          }
+
+          await withTimeout(ensureProfile(userId, sessionEmail), 5000, "Profile sync");
+          await withTimeout(loadDbHistory(userId), 6000, "History sync");
           setAuthStatus("邮箱登录成功，可以直接开始讨论。");
+          setAuthMode("signIn");
           setStage("home");
+        } else if (isRecoveryFlow) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+          setAuthMode("forgot");
+          setAuthStatus("重置链接已失效，请重新发送重置邮件。");
+          setStage("auth");
         }
       } catch (error) {
         console.error(error);
-        setAuthStatus("临时链接下登录状态检查超时。你可以先进入演示工作台，或重新点击登录。");
+        setAuthStatus("登录状态检查超时，请稍后重试或重新登录。");
       } finally {
         setIsCheckingSession(false);
       }
     }
 
     initializeSession();
-  }, [ensureProfile, supabase, supabaseConfigured]);
+  }, [ensureProfile, loadDbHistory, supabase, supabaseConfigured]);
+
+  function setAuthModeSafely(nextMode: AuthMode) {
+    setAuthMode(nextMode);
+    setAuthStatus("");
+    setConfirmPassword("");
+    if (nextMode === "forgot") setPassword("");
+  }
+
+  function openSignIn() {
+    setAuthMode("signIn");
+    setPassword("");
+    setConfirmPassword("");
+    setAuthStatus("");
+    setStage("auth");
+  }
+
+  function registerLoginFailure() {
+    const nextFailureCount = loginFailureCount + 1;
+    setLoginFailureCount(nextFailureCount);
+
+    if (nextFailureCount >= 5) {
+      const now = Date.now();
+      setAuthClock(now);
+      setLoginCooldownUntil(now + 60_000);
+    }
+  }
 
   async function signUpWithPassword() {
     setIsAuthenticating(true);
@@ -1449,6 +1805,13 @@ export default function Home() {
 
     if (validationMessage) {
       setAuthStatus(validationMessage);
+      setIsAuthenticating(false);
+      return;
+    }
+
+    const strengthMessage = validateStrongPassword(password);
+    if (strengthMessage) {
+      setAuthStatus(strengthMessage);
       setIsAuthenticating(false);
       return;
     }
@@ -1478,6 +1841,7 @@ export default function Home() {
       setEmail(account.email);
       setDisplayName(account.displayName);
       setLanguage(account.language);
+      setHistoryRecords(loadLocalHistory(account.id));
       setAuthStatus("演示账号注册成功，已进入工作台。");
       setStage("home");
       setIsAuthenticating(false);
@@ -1487,8 +1851,11 @@ export default function Home() {
     try {
       const { data, error } = await withTimeout(
         supabase.auth.signUp({
-          email,
+          email: normalizeEmail(email),
           password,
+          options: {
+            emailRedirectTo: window.location.origin,
+          },
         }),
         12000,
         "Sign up",
@@ -1503,15 +1870,18 @@ export default function Home() {
         setSessionUserId(data.session.user.id);
         setActiveViewerId(data.session.user.id);
         await withTimeout(ensureProfile(data.session.user.id, data.session.user.email ?? email), 6000, "Profile sync");
+        await withTimeout(loadDbHistory(data.session.user.id), 6000, "History sync");
         setAuthStatus("注册成功，已进入 Alpha 工作台。");
+        setLoginFailureCount(0);
+        setLoginCooldownUntil(0);
         setStage("home");
         return;
       }
 
-      setAuthStatus("注册成功，但 Supabase 仍要求邮箱确认。");
+      setAuthStatus("注册成功。请打开邮箱点击确认链接，完成验证后再登录。");
     } catch (error) {
       console.error(error);
-      setAuthStatus("注册请求超时。临时链接网络不稳定时，可以先进入演示工作台测试。");
+      setAuthStatus("注册请求超时，请稍后重试。");
     } finally {
       setIsAuthenticating(false);
     }
@@ -1520,6 +1890,13 @@ export default function Home() {
   async function signInWithPassword() {
     setIsAuthenticating(true);
     setAuthStatus("");
+
+    if (loginCooldownRemaining > 0) {
+      setAuthStatus(`登录尝试过于频繁，请 ${loginCooldownRemaining} 秒后再试。`);
+      setIsAuthenticating(false);
+      return;
+    }
+
     const validationMessage = validateAuthFields(email, password);
 
     if (validationMessage) {
@@ -1536,6 +1913,7 @@ export default function Home() {
 
       if (!account) {
         setAuthStatus("邮箱或密码不正确。如果还没有账号，请先注册。");
+        registerLoginFailure();
         setIsAuthenticating(false);
         return;
       }
@@ -1546,7 +1924,10 @@ export default function Home() {
       setEmail(account.email);
       setDisplayName(account.displayName);
       setLanguage(account.language);
+      setHistoryRecords(loadLocalHistory(account.id));
       setAuthStatus("演示账号登录成功，已进入工作台。");
+      setLoginFailureCount(0);
+      setLoginCooldownUntil(0);
       setStage("home");
       setIsAuthenticating(false);
       return;
@@ -1555,7 +1936,7 @@ export default function Home() {
     try {
       const { data, error } = await withTimeout(
         supabase.auth.signInWithPassword({
-          email,
+          email: normalizeEmail(email),
           password,
         }),
         12000,
@@ -1564,6 +1945,7 @@ export default function Home() {
 
       if (error) {
         setAuthStatus(authErrorMessage(error.message));
+        registerLoginFailure();
         return;
       }
 
@@ -1571,36 +1953,206 @@ export default function Home() {
         setSessionUserId(data.session.user.id);
         setActiveViewerId(data.session.user.id);
         await withTimeout(ensureProfile(data.session.user.id, data.session.user.email ?? email), 6000, "Profile sync");
+        await withTimeout(loadDbHistory(data.session.user.id), 6000, "History sync");
         setAuthStatus("登录成功，已进入 Alpha 工作台。");
+        setLoginFailureCount(0);
+        setLoginCooldownUntil(0);
         setStage("home");
       }
     } catch (error) {
       console.error(error);
-      setAuthStatus("登录请求超时。临时链接网络不稳定时，可以先进入演示工作台测试。");
+      setAuthStatus("登录请求超时，请稍后重试。");
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
+
+  async function sendPasswordResetEmail() {
+    setIsAuthenticating(true);
+    setAuthStatus("");
+
+    const emailMessage = validateEmail(email);
+    if (emailMessage) {
+      setAuthStatus(emailMessage);
+      setIsAuthenticating(false);
+      return;
+    }
+
+    if (!supabaseConfigured) {
+      setAuthStatus("演示账号不支持邮件重置密码，请使用 Supabase 账号测试。");
+      setIsAuthenticating(false);
+      return;
+    }
+
+    try {
+      const { error } = await withTimeout(
+        supabase.auth.resetPasswordForEmail(normalizeEmail(email), {
+          redirectTo: window.location.origin,
+        }),
+        12000,
+        "Password reset",
+      );
+
+      if (error) {
+        setAuthStatus(authErrorMessage(error.message));
+        return;
+      }
+
+      setAuthStatus(authText.passwordResetSent);
+    } catch (error) {
+      console.error(error);
+      setAuthStatus("重置邮件发送超时，请稍后再试。");
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
+
+  async function updateAccountPassword() {
+    setIsAuthenticating(true);
+    setAuthStatus("");
+
+    const strengthMessage = validateStrongPassword(password);
+    if (strengthMessage) {
+      setAuthStatus(strengthMessage);
+      setIsAuthenticating(false);
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setAuthStatus(authText.passwordMismatch);
+      setIsAuthenticating(false);
+      return;
+    }
+
+    if (!supabaseConfigured) {
+      const normalizedEmail = normalizeEmail(email);
+      const nextAccounts = loadLocalAlphaAccounts().map((account) =>
+        account.email === normalizedEmail ? { ...account, password } : account,
+      );
+      saveLocalAlphaAccounts(nextAccounts);
+      setAuthStatus("演示账号密码已更新。");
+      setAuthMode("signIn");
+      setIsAuthenticating(false);
+      return;
+    }
+
+    try {
+      const { data: sessionData } = await withTimeout(supabase.auth.getSession(), 5000, "Password session");
+
+      if (!sessionData.session) {
+        setAuthMode("forgot");
+        setPassword("");
+        setConfirmPassword("");
+        setAuthStatus("重置密码链接已失效或登录状态不存在，请重新发送重置邮件。");
+        return;
+      }
+
+      const { error } = await withTimeout(supabase.auth.updateUser({ password }), 12000, "Password update");
+
+      if (error) {
+        setAuthStatus(authErrorMessage(error.message));
+        return;
+      }
+
+      setPassword("");
+      setConfirmPassword("");
+      setAuthMode("signIn");
+      setAuthStatus("密码已更新。之后请使用新密码登录。");
+
+      if (sessionUserId) {
+        setStage("home");
+      }
+    } catch (error) {
+      console.error(error);
+      setAuthStatus("密码更新超时，请稍后再试。");
     } finally {
       setIsAuthenticating(false);
     }
   }
 
   async function createRoom() {
-    const code = joinCode();
     const statusText = roomStatusCopy[language];
     const dateLabel = new Date().toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
     const generatedTitle = uiCopy[language].defaultRoomTitle(dateLabel);
     const nextRoomTitle = roomTitle.trim() || generatedTitle;
-    setRoomTitle(nextRoomTitle);
-    setStage("room");
-    setIsHistoryView(false);
-    setMessages([]);
-    setFiles([]);
-    setPrivateAiResults([]);
-    setFilePreview(null);
-    setIsAiPanelOpen(false);
-    setRoomMembers([currentMember]);
-    setActiveViewerId(currentMember.id);
+
+    function prepareRoomState() {
+      setRoomTitle(nextRoomTitle);
+      setIsHistoryView(false);
+      setMessages([]);
+      setFiles([]);
+      setPrivateAiResults([]);
+      setFilePreview(null);
+      setIsAiPanelOpen(false);
+      setRoomMembers([currentMember]);
+      setActiveViewerId(currentMember.id);
+    }
+
     setIsRoomConnectionLost(false);
     demoSyncFailureCountRef.current = 0;
 
+    if (supabaseConfigured && sessionUserId) {
+      setRoomStatus(statusText.creatingDb);
+      setIsDbRoom(false);
+      setIsPublicDemoRoom(false);
+
+      try {
+        await ensureProfile(sessionUserId);
+
+        let room: DbRoomRow | null = null;
+        let roomErrorMessage = "";
+
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const { data, error } = await supabase
+            .from("rooms")
+            .insert({
+              title: nextRoomTitle,
+              join_code: joinCode(),
+              created_by: sessionUserId,
+            })
+            .select("id, title, join_code, created_by")
+            .single<DbRoomRow>();
+
+          if (!error && data) {
+            room = data;
+            roomErrorMessage = "";
+            break;
+          }
+
+          roomErrorMessage = error?.message ?? "Room create failed";
+          if (!error?.message.toLowerCase().includes("duplicate")) break;
+        }
+
+        if (!room) throw new Error(roomErrorMessage || "Room create failed");
+
+        const { error: memberError } = await supabase.from("room_members").insert({
+          room_id: room.id,
+          user_id: sessionUserId,
+          role: "owner",
+        });
+
+        if (memberError) throw new Error(memberError.message);
+
+        prepareRoomState();
+        setStage("room");
+        setCurrentRoomId(room.id);
+        setRoomTitle(room.title);
+        setRoomCode(room.join_code);
+        setIsDbRoom(true);
+        setIsPublicDemoRoom(false);
+        setRoomStatus(statusText.createdDb);
+        setRoomDialog(null);
+        return;
+      } catch (error) {
+        console.error(error);
+        setRoomStatus(error instanceof Error ? `创建房间失败：${error.message}` : statusText.createPublicFailed);
+        return;
+      }
+    }
+
+    prepareRoomState();
+    setStage("room");
+    const code = joinCode();
     setRoomStatus(statusText.creatingPublic);
     setIsDbRoom(false);
     setIsPublicDemoRoom(true);
@@ -1652,9 +2204,14 @@ export default function Home() {
     setMessages(initialMessages);
     setFiles([]);
     setPrivateAiResults([]);
+    setHistoryRecords([]);
+    setIsHistoryOpen(false);
     setFilePreview(null);
     setIsAiPanelOpen(false);
     setStage("auth");
+    setAuthMode("signIn");
+    setPassword("");
+    setConfirmPassword("");
     setAuthStatus("已退出账户。");
     setRoomStatus("");
   }
@@ -1669,6 +2226,61 @@ export default function Home() {
     if (!code || code.replace(/\D/g, "").length !== 4) {
       setRoomStatus("请输入 4 位面对面口令，例如 4821。");
       return;
+    }
+
+    if (supabaseConfigured && sessionUserId) {
+      setIsDbRoom(false);
+      setIsPublicDemoRoom(false);
+      setRoomStatus(statusText.findingDb);
+
+      try {
+        await ensureProfile(sessionUserId);
+
+        const { data: room, error: roomError } = await supabase
+          .from("rooms")
+          .select("id, title, join_code, created_by")
+          .eq("join_code", code)
+          .maybeSingle<DbRoomRow>();
+
+        if (roomError) throw new Error(roomError.message);
+        if (!room) {
+          setRoomStatus(statusText.roomNotFound);
+          return;
+        }
+
+        const { error: memberError } = await supabase.from("room_members").insert({
+          room_id: room.id,
+          user_id: sessionUserId,
+          role: "member",
+        });
+
+        if (memberError && !memberError.message.toLowerCase().includes("duplicate")) {
+          throw new Error(memberError.message);
+        }
+
+        setStage("room");
+        setIsHistoryView(false);
+        setCurrentRoomId(room.id);
+        setRoomTitle(room.title);
+        setRoomCode(room.join_code);
+        setMessages([]);
+        setFiles([]);
+        setPrivateAiResults([]);
+        setFilePreview(null);
+        setIsAiPanelOpen(false);
+        setActiveViewerId(currentMember.id);
+        setIsDbRoom(true);
+        setIsPublicDemoRoom(false);
+        await loadRoomMembers(room.id);
+        await loadMessages(room.id);
+        setRoomStatus(statusText.joinedDb);
+        setRoomDialog(null);
+        return;
+      } catch (error) {
+        console.error(error);
+        setRoomStatus(error instanceof Error ? `加入房间失败：${error.message}` : statusText.joinFailed);
+        return;
+      }
     }
 
     setIsDbRoom(false);
@@ -1744,27 +2356,56 @@ export default function Home() {
     setRoomStatus(status);
   }
 
-  function endDiscussion() {
+  async function endDiscussion() {
+    if (isSavingHistory) return;
+
+    setIsSavingHistory(true);
+    const endedAtIso = new Date().toISOString();
     const record: HistoryRecord = {
-      id: currentRoomId ?? crypto.randomUUID(),
+      id: crypto.randomUUID(),
+      roomId: isDbRoom ? currentRoomId : null,
       title: roomTitle || "未命名讨论",
       joinCode: roomCode,
-      endedAt: new Date().toLocaleString("zh-CN", {
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      endedAt: formatHistoryEndedAt(endedAtIso),
+      endedAtIso,
       members,
       messages,
       files,
       aiResults: privateAiResults,
     };
 
-    const nextRecords = [record, ...historyRecords.filter((item) => item.id !== record.id)].slice(0, 20);
+    const nextRecords = [
+      record,
+      ...historyRecords.filter((item) => (record.roomId ? item.roomId !== record.roomId : item.id !== record.id)),
+    ].slice(0, 20);
     setHistoryRecords(nextRecords);
     saveLocalHistory(historyOwnerId, nextRecords);
-    returnHome("讨论已结束，完整聊天和 AI 结果已保存到历史记录。");
+
+    try {
+      await saveDbHistory(record, historyOwnerId);
+      returnHome("讨论已结束，完整聊天和 AI 结果已保存到历史记录。");
+    } catch (error) {
+      console.error(error);
+      returnHome("讨论已保存到本机历史记录，但同步到数据库失败，请稍后重试。");
+    } finally {
+      setIsSavingHistory(false);
+    }
+  }
+
+  async function deleteHistoryRecord(record: HistoryRecord) {
+    if (!window.confirm(homeText.deleteHistoryConfirm)) return;
+
+    const nextRecords = historyRecords.filter((item) => item.id !== record.id);
+    setHistoryRecords(nextRecords);
+    saveLocalHistory(historyOwnerId, nextRecords);
+
+    try {
+      await deleteDbHistory(record.id, historyOwnerId);
+      setRoomStatus("");
+    } catch (error) {
+      console.error(error);
+      setRoomStatus("历史记录已从当前页面删除，但数据库同步删除失败，请稍后重试。");
+    }
   }
 
   function mainText(message: Message) {
@@ -2380,6 +3021,21 @@ export default function Home() {
         });
       }
 
+      if (isDbRoom && currentRoomId && sessionUserId && message.senderId === sessionUserId) {
+        const { error } = await supabase
+          .from("messages")
+          .update({
+            original_text: updatedMessage.originalText,
+            translations: updatedMessage.translations,
+          })
+          .eq("id", updatedMessage.id);
+
+        if (error) {
+          setRoomStatus(`语音已在本机转写，但保存到数据库失败：${error.message}`);
+          return transcript;
+        }
+      }
+
       setRoomStatus("语音已重新转写并更新翻译。");
       return transcript;
     } catch (error) {
@@ -2854,63 +3510,174 @@ export default function Home() {
   }
 
   if (stage === "auth") {
+    const isPasswordManagementMode = authMode === "reset" || authMode === "change";
+    const showPasswordField = authMode !== "forgot";
+    const showPasswordStrength = authMode === "signUp" || isPasswordManagementMode;
+    const primaryAuthAction =
+      authMode === "signIn"
+        ? signInWithPassword
+        : authMode === "signUp"
+          ? signUpWithPassword
+          : authMode === "forgot"
+            ? sendPasswordResetEmail
+            : updateAccountPassword;
+    const primaryAuthLabel =
+      authMode === "signIn"
+        ? copy.signIn
+        : authMode === "signUp"
+          ? copy.signUp
+          : authMode === "forgot"
+            ? authText.sendResetEmail
+            : authText.updatePassword;
+
     return (
       <main className="center-shell">
         <section className="panel auth-panel">
-          <div className="brand-row">
-            <div className="brand-mark" aria-hidden="true" />
-            <div>
-              <p className="eyebrow">AI Study Room</p>
-              <h1>폴리톡</h1>
+          <div className="auth-top">
+            <div className="brand-row auth-brand">
+              <div className="brand-mark" aria-hidden="true" />
+              <div>
+                <p className="eyebrow">AI Study Room</p>
+                <h1>폴리톡</h1>
+              </div>
             </div>
+            <label className="language-menu">
+              <span>Language</span>
+              <select
+                aria-label="Language"
+                value={language}
+                onChange={(event) => setLanguage(event.target.value as Language)}
+              >
+                {supportedLanguages.map((item) => (
+                  <option key={item} value={item}>
+                    {languageLabels[item]}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
 
           <div className="form-grid">
-            <label>
-              <span>{copy.schoolEmail}</span>
-              <input value={email} onChange={(event) => setEmail(event.target.value)} />
-            </label>
-            <label>
-              <span>{copy.alphaPassword}</span>
-              <input
-                minLength={6}
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </label>
-            <label>
-              <span>{copy.displayName}</span>
-              <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
-            </label>
-            <div>
-              <span className="field-label">{copy.myLanguage}</span>
-              <div className="segmented">
-                {(["zh", "ko", "en"] as Language[]).map((item) => (
+            {authMode === "signIn" || authMode === "signUp" ? (
+              <div className="auth-tabs">
+                {(["signIn", "signUp"] as AuthMode[]).map((item) => (
                   <button
-                    className={language === item ? "active" : ""}
+                    className={authMode === item ? "active" : ""}
                     key={item}
-                    onClick={() => setLanguage(item)}
+                    onClick={() => setAuthModeSafely(item)}
                     type="button"
                   >
-                    {languageLabels[item]}
+                    {item === "signIn" ? authText.loginTab : authText.registerTab}
                   </button>
                 ))}
               </div>
+            ) : null}
+
+            {authMode === "forgot" ? <p className="auth-helper">{authText.forgotSubtitle}</p> : null}
+            {authMode === "reset" ? <p className="auth-helper">{authText.resetSubtitle}</p> : null}
+
+            {!isPasswordManagementMode ? (
+              <label>
+                <span>{copy.schoolEmail}</span>
+                <input
+                  autoComplete="email"
+                  placeholder={authText.emailPlaceholder}
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </label>
+            ) : null}
+
+            {showPasswordField ? (
+              <label>
+                <span>{isPasswordManagementMode ? authText.setNewPassword : copy.alphaPassword}</span>
+                <input
+                  autoComplete={isPasswordManagementMode ? "new-password" : "current-password"}
+                  minLength={authMode === "signUp" || isPasswordManagementMode ? 8 : 6}
+                  placeholder={isPasswordManagementMode ? authText.newPasswordPlaceholder : authText.passwordPlaceholder}
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </label>
+            ) : null}
+
+            {showPasswordStrength ? (
+              <div className="password-strength" aria-live="polite">
+                <div className="password-meter">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <span className={index < currentPasswordStrength.score ? "active" : ""} key={index} />
+                  ))}
+                </div>
+                <small>
+                  {currentPasswordStrength.isStrongEnough ? authText.strongPassword : authText.weakPassword} ·{" "}
+                  {authText.passwordHint}
+                </small>
+              </div>
+            ) : null}
+
+            {isPasswordManagementMode ? (
+              <label>
+                <span>{authText.confirmPassword}</span>
+                <input
+                  autoComplete="new-password"
+                  minLength={8}
+                  placeholder={authText.confirmPasswordPlaceholder}
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                />
+              </label>
+            ) : null}
+
+            {authMode === "signUp" ? (
+              <>
+                <label>
+                  <span>{copy.displayName}</span>
+                  <input
+                    autoComplete="name"
+                    placeholder={authText.displayNamePlaceholder}
+                    value={displayName}
+                    onChange={(event) => setDisplayName(event.target.value)}
+                  />
+                </label>
+              </>
+            ) : null}
+
+            <button
+              className="primary-action"
+              disabled={isAuthenticating || (authMode === "signIn" && loginCooldownRemaining > 0)}
+              onClick={primaryAuthAction}
+              type="button"
+            >
+              {isAuthenticating ? <Loader2 className="spin" size={18} /> : null}
+              {primaryAuthLabel}
+            </button>
+
+            <div className="auth-actions">
+              {authMode === "signIn" ? (
+                <button className="text-button" onClick={() => setAuthModeSafely("forgot")} type="button">
+                  {authText.forgotPassword}
+                </button>
+              ) : null}
+              {authMode === "forgot" ? (
+                <button className="text-button" onClick={() => setAuthModeSafely("signIn")} type="button">
+                  {authText.loginTab}
+                </button>
+              ) : null}
+              {authMode === "reset" ? (
+                <button className="text-button" onClick={() => setAuthModeSafely("forgot")} type="button">
+                  {authText.resendReset}
+                </button>
+              ) : null}
+              {authMode === "change" ? (
+                <button className="text-button" onClick={() => setStage("home")} type="button">
+                  {homeText.close}
+                </button>
+              ) : null}
             </div>
 
-            <button className="primary-action" disabled={isAuthenticating} onClick={signUpWithPassword} type="button">
-              {isAuthenticating ? <Loader2 className="spin" size={18} /> : null}
-              {copy.signUp}
-            </button>
-            <button className="secondary-action" disabled={isAuthenticating} onClick={signInWithPassword} type="button">
-              {isAuthenticating ? <Loader2 className="spin" size={18} /> : null}
-              {copy.signIn}
-            </button>
-            <button className="text-button" onClick={() => setStage("lobby")} type="button">
-              {isCheckingSession ? <Loader2 className="spin" size={18} /> : null}
-              {isCheckingSession ? copy.skipChecking : copy.demoWorkspace}
-            </button>
             {authStatus ? <p className="status-text">{authStatus}</p> : null}
           </div>
         </section>
@@ -2934,7 +3701,12 @@ export default function Home() {
             <div className="form-grid">
               <label>
                 <span>{homeText.displayName}</span>
-                <input value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
+                <input
+                  autoComplete="name"
+                  placeholder={authText.displayNamePlaceholder}
+                  value={displayName}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                />
               </label>
 
               <div>
@@ -2968,7 +3740,7 @@ export default function Home() {
                     <strong>{email}</strong>
                   </div>
                 ) : (
-                  <button className="text-button" onClick={() => setStage("auth")} type="button">
+                  <button className="text-button" onClick={openSignIn} type="button">
                     {homeText.login}
                   </button>
                 )}
@@ -2976,6 +3748,20 @@ export default function Home() {
                   <History size={16} />
                   {homeText.history}
                 </button>
+                {sessionUserId ? (
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      setPassword("");
+                      setConfirmPassword("");
+                      setAuthModeSafely("change");
+                      setStage("auth");
+                    }}
+                    type="button"
+                  >
+                    {authText.changePassword}
+                  </button>
+                ) : null}
                 {sessionUserId ? (
                   <button className="text-button" onClick={signOutAccount} type="button">
                     {homeText.logout}
@@ -3004,11 +3790,24 @@ export default function Home() {
                 {historyRecords.length ? (
                   <div className="history-list">
                     {historyRecords.map((record) => (
-                      <button className="history-card" key={record.id} onClick={() => openHistory(record)} type="button">
-                        <strong>{record.title}</strong>
-                        <span>{record.endedAt}</span>
-                        <small>{homeText.historyMeta(record.messages.length, record.files.length, record.aiResults.length)}</small>
-                      </button>
+                      <article className="history-card" key={record.id}>
+                        <button className="history-card-main" onClick={() => openHistory(record)} type="button">
+                          <strong>{record.title}</strong>
+                          <span>{record.endedAt}</span>
+                          <small>{homeText.historyMeta(record.messages.length, record.files.length, record.aiResults.length)}</small>
+                        </button>
+                        <button
+                          aria-label={homeText.deleteHistory}
+                          className="history-delete-button"
+                          onClick={() => {
+                            void deleteHistoryRecord(record);
+                          }}
+                          title={homeText.deleteHistory}
+                          type="button"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </article>
                     ))}
                   </div>
                 ) : (
@@ -3163,7 +3962,8 @@ export default function Home() {
                   {copy.myAiResults}
                 </button>
               ) : null}
-              <button className="text-button end-action" onClick={endDiscussion} type="button">
+              <button className="text-button end-action" disabled={isSavingHistory} onClick={endDiscussion} type="button">
+                {isSavingHistory ? <Loader2 className="spin" size={17} /> : null}
                 {copy.endAndSave}
               </button>
             </>
@@ -3276,7 +4076,14 @@ export default function Home() {
                               {activeVoiceMenuId === message.id ? (
                                 <div className="voice-menu">
                                   {(["zh", "ko", "en"] as Language[]).map((item) => (
-                                    <button key={item} onClick={() => transcribeVoiceMessage(message, item)} type="button">
+                                    <button
+                                      key={item}
+                                      onClick={() => {
+                                        setActiveVoiceMenuId(null);
+                                        void transcribeVoiceMessage(message, item);
+                                      }}
+                                      type="button"
+                                    >
                                       {copy.transcribeTo(languageLabels[item])}
                                     </button>
                                   ))}

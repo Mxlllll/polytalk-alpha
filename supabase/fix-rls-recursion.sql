@@ -17,6 +17,7 @@ drop policy if exists "authenticated users can find rooms by join code" on publi
 drop policy if exists "members can read memberships" on public.room_members;
 drop policy if exists "members can read messages" on public.messages;
 drop policy if exists "members can send messages" on public.messages;
+drop policy if exists "senders can update their messages" on public.messages;
 drop policy if exists "members can read attachments" on public.attachments;
 drop policy if exists "members can create attachments" on public.attachments;
 
@@ -43,6 +44,18 @@ create policy "members can read messages"
 create policy "members can send messages"
   on public.messages for insert
   to authenticated
+  with check (
+    auth.uid() = sender_id
+    and public.is_room_member(room_id)
+  );
+
+create policy "senders can update their messages"
+  on public.messages for update
+  to authenticated
+  using (
+    auth.uid() = sender_id
+    and public.is_room_member(room_id)
+  )
   with check (
     auth.uid() = sender_id
     and public.is_room_member(room_id)
