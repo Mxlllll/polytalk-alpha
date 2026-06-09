@@ -391,7 +391,7 @@ const uiCopy: Record<
     displayName: "显示名称",
     myLanguage: "我的母语",
     signUp: "注册 Alpha 账号",
-    signIn: "登录 Alpha 账号",
+    signIn: "登录账户",
     checkingSession: "正在检查登录状态",
     verifiedEmail: "已验证邮箱",
     lobbyTitle: "创建或加入讨论房间",
