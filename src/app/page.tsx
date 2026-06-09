@@ -74,12 +74,6 @@ type DbMessageRow = {
   created_at: string;
 };
 
-type DbRoomRow = {
-  id: string;
-  title: string;
-  join_code: string;
-};
-
 type DbRoomMemberRow = {
   user_id: string;
   profiles:
@@ -776,11 +770,6 @@ function saveLocalHistory(userId: string, records: HistoryRecord[]) {
   window.localStorage.setItem(historyStorageKey(userId), JSON.stringify(records.slice(0, 20)));
 }
 
-function isTemporaryPublicHost() {
-  if (typeof window === "undefined") return false;
-  return window.location.hostname.endsWith("trycloudflare.com");
-}
-
 function sanitizeStorageFileName(fileName: string) {
   const extension = fileName.includes(".") ? fileName.split(".").pop()?.replace(/[^a-zA-Z0-9]/g, "") : "";
   const baseName = fileName.replace(/\.[^/.]+$/, "");
@@ -1439,81 +1428,37 @@ export default function Home() {
     setRoomMembers([currentMember]);
     setActiveViewerId(currentMember.id);
 
-    if (!sessionUserId || isTemporaryPublicHost()) {
-      setRoomStatus(statusText.creatingPublic);
-      setIsDbRoom(false);
-      setIsPublicDemoRoom(true);
+    setRoomStatus(statusText.creatingPublic);
+    setIsDbRoom(false);
+    setIsPublicDemoRoom(true);
 
-      try {
-        const response = await fetch("/api/demo/rooms", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "create",
-            title: nextRoomTitle,
-            joinCode: code,
-            member: currentMember,
-          }),
-        });
-        const data = (await response.json()) as DemoRoomApiResponse;
-        if (!response.ok || !data.room) throw new Error(data.error ?? "Demo room create failed");
+    try {
+      const response = await fetch("/api/demo/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          title: nextRoomTitle,
+          joinCode: code,
+          member: currentMember,
+        }),
+      });
+      const data = (await response.json()) as DemoRoomApiResponse;
+      if (!response.ok || !data.room) throw new Error(data.error ?? "Demo room create failed");
 
-        setCurrentRoomId(data.room.id);
-        setRoomTitle(data.room.title);
-        setRoomCode(data.room.joinCode);
-        setRoomMembers(data.room.members);
-        setMessages(data.room.messages);
-        setFiles(data.room.files);
-        setRoomStatus(statusText.createdPublic);
-      } catch (error) {
-        console.error(error);
-        setIsPublicDemoRoom(false);
-        setRoomStatus(statusText.createPublicFailed);
-      }
+      setCurrentRoomId(data.room.id);
+      setRoomTitle(data.room.title);
+      setRoomCode(data.room.joinCode);
+      setRoomMembers(data.room.members);
+      setMessages(data.room.messages);
+      setFiles(data.room.files);
+      setRoomStatus(statusText.createdPublic);
+    } catch (error) {
+      console.error(error);
+      setIsPublicDemoRoom(false);
+      setRoomStatus(statusText.createPublicFailed);
       return;
     }
-
-    const roomId = crypto.randomUUID();
-    setCurrentRoomId(roomId);
-    setRoomCode(code);
-    setIsPublicDemoRoom(false);
-    setRoomMembers([
-      {
-        id: sessionUserId,
-        name: displayName || "Mina",
-        email,
-        language,
-      },
-    ]);
-    setIsDbRoom(true);
-    setRoomStatus(statusText.creatingDb);
-
-    const { error: roomError } = await supabase.from("rooms").insert({
-      id: roomId,
-      title: nextRoomTitle,
-      join_code: code,
-      created_by: sessionUserId,
-    });
-
-    if (roomError) {
-      setRoomStatus(`创建房间失败：${roomError.message}`);
-      setIsDbRoom(false);
-      return;
-    }
-
-    const { error: memberError } = await supabase.from("room_members").insert({
-      room_id: roomId,
-      user_id: sessionUserId,
-      role: "owner",
-    });
-
-    if (memberError) {
-      setRoomStatus(`加入房间失败：${memberError.message}`);
-      return;
-    }
-
-    setRoomStatus(statusText.createdDb);
-    await loadRoomMembers(roomId);
   }
 
   async function joinRoom() {
@@ -1526,95 +1471,43 @@ export default function Home() {
       return;
     }
 
-    if (!sessionUserId || isTemporaryPublicHost()) {
-      setIsDbRoom(false);
-      setIsPublicDemoRoom(true);
-      setRoomStatus(statusText.findingPublic);
+    setIsDbRoom(false);
+    setIsPublicDemoRoom(true);
+    setRoomStatus(statusText.findingPublic);
 
-      try {
-        const response = await fetch("/api/demo/rooms", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "join",
-            joinCode: code,
-            member: currentMember,
-          }),
-        });
-        const data = (await response.json()) as DemoRoomApiResponse;
-        if (!response.ok || !data.room) {
-          setIsPublicDemoRoom(false);
-          setRoomStatus(statusText.roomNotFound);
-          return;
-        }
-
-        setStage("room");
-        setIsHistoryView(false);
-        setCurrentRoomId(data.room.id);
-        setRoomTitle(data.room.title);
-        setRoomCode(data.room.joinCode);
-        setRoomMembers(data.room.members);
-        setMessages(data.room.messages);
-        setFiles(data.room.files);
-        setActiveViewerId(currentMember.id);
-        setRoomStatus(statusText.joinedPublic);
-      } catch (error) {
-        console.error(error);
+    try {
+      const response = await fetch("/api/demo/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "join",
+          joinCode: code,
+          member: currentMember,
+        }),
+      });
+      const data = (await response.json()) as DemoRoomApiResponse;
+      if (!response.ok || !data.room) {
         setIsPublicDemoRoom(false);
-        setRoomStatus(statusText.joinFailed);
+        setRoomStatus(statusText.roomNotFound);
+        return;
       }
+
+      setStage("room");
+      setIsHistoryView(false);
+      setCurrentRoomId(data.room.id);
+      setRoomTitle(data.room.title);
+      setRoomCode(data.room.joinCode);
+      setRoomMembers(data.room.members);
+      setMessages(data.room.messages);
+      setFiles(data.room.files);
+      setActiveViewerId(currentMember.id);
+      setRoomStatus(statusText.joinedPublic);
+    } catch (error) {
+      console.error(error);
+      setIsPublicDemoRoom(false);
+      setRoomStatus(statusText.joinFailed);
       return;
     }
-
-    setIsPublicDemoRoom(false);
-    setRoomStatus(statusText.findingDb);
-
-    const { data: room, error: roomError } = await supabase
-      .from("rooms")
-      .select("id, title, join_code")
-      .eq("join_code", code)
-      .maybeSingle();
-
-    if (roomError) {
-      setIsDbRoom(false);
-      setRoomStatus(`查找房间失败：${roomError.message}`);
-      return;
-    }
-
-    if (!room) {
-      setIsDbRoom(false);
-      setRoomStatus(statusText.roomNotFound);
-      return;
-    }
-
-    const dbRoom = room as DbRoomRow;
-    setStage("room");
-    setMessages([]);
-    setFiles([]);
-    setRoomMembers([currentMember]);
-    setActiveViewerId(currentMember.id);
-    setCurrentRoomId(dbRoom.id);
-    setRoomTitle(dbRoom.title);
-    setRoomCode(dbRoom.join_code);
-    setIsDbRoom(true);
-
-    const { error: memberError } = await supabase.from("room_members").upsert(
-      {
-        room_id: dbRoom.id,
-        user_id: sessionUserId,
-        role: "member",
-      },
-      { onConflict: "room_id,user_id", ignoreDuplicates: true },
-    );
-
-    if (memberError) {
-      setRoomStatus(`加入房间失败：${memberError.message}`);
-      return;
-    }
-
-    await loadMessages(dbRoom.id);
-    await loadRoomMembers(dbRoom.id);
-    setRoomStatus(statusText.joinedDb);
   }
 
   function openHistory(record: HistoryRecord) {
