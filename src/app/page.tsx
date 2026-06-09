@@ -399,7 +399,7 @@ const uiCopy: Record<
 > = {
   zh: {
     schoolEmail: "邮箱",
-    alphaPassword: "Alpha 密码",
+    alphaPassword: "密码",
     displayName: "显示名称",
     myLanguage: "我的母语",
     signUp: "注册账号",
@@ -449,7 +449,7 @@ const uiCopy: Record<
   },
   ko: {
     schoolEmail: "이메일",
-    alphaPassword: "Alpha 비밀번호",
+    alphaPassword: "비밀번호",
     displayName: "표시 이름",
     myLanguage: "내 모국어",
     signUp: "회원가입",
@@ -499,7 +499,7 @@ const uiCopy: Record<
   },
   en: {
     schoolEmail: "Email",
-    alphaPassword: "Alpha password",
+    alphaPassword: "Password",
     displayName: "Display name",
     myLanguage: "My primary language",
     signUp: "Create account",
