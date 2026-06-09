@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -9,7 +9,6 @@ import {
   Loader2,
   LogOut,
   Mic,
-  MicOff,
   Plus,
   Send,
   Sparkles,
@@ -24,46 +23,7 @@ type FileSummaryMode = "course" | "assignment";
 type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
 type MessageReactions = Partial<Record<ReactionKey, string[]>>;
 
-type SpeechRecognitionAlternativeLike = {
-  transcript: string;
-};
-
-type SpeechRecognitionResultLike = {
-  readonly isFinal: boolean;
-  readonly [index: number]: SpeechRecognitionAlternativeLike;
-};
-
-type SpeechRecognitionEventLike = Event & {
-  readonly resultIndex: number;
-  readonly results: {
-    readonly length: number;
-    readonly [index: number]: SpeechRecognitionResultLike;
-  };
-};
-
-type SpeechRecognitionErrorEventLike = Event & {
-  readonly error?: string;
-};
-
-type SpeechRecognitionLike = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onend: (() => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  abort: () => void;
-  start: () => void;
-  stop: () => void;
-};
-
-type SpeechRecognitionConstructorLike = new () => SpeechRecognitionLike;
-
-type SpeechRecognitionWindow = Window &
-  typeof globalThis & {
-    SpeechRecognition?: SpeechRecognitionConstructorLike;
-    webkitSpeechRecognition?: SpeechRecognitionConstructorLike;
-  };
+type RecorderState = "idle" | "recording" | "processing";
 
 type Member = {
   id: string;
@@ -75,7 +35,7 @@ type Member = {
 type Message = {
   id: string;
   senderId: string;
-  kind: "text" | "file" | "file_summary" | "discussion_summary";
+  kind: "text" | "voice" | "file" | "file_summary" | "discussion_summary";
   originalLanguage: Language;
   originalText: string;
   translations: Partial<Record<Language, string>>;
@@ -83,6 +43,8 @@ type Message = {
   fileName?: string;
   filePath?: string;
   fileType?: string | null;
+  voiceUrl?: string;
+  voiceDuration?: number;
   createdAt: string;
   isPending?: boolean;
   reactions?: MessageReactions;
@@ -91,11 +53,13 @@ type Message = {
 type DbMessageRow = {
   id: string;
   sender_id: string;
-  kind: "text" | "file_summary" | "discussion_summary";
+  kind: "text" | "voice" | "file_summary" | "discussion_summary";
   original_language: Language;
   original_text: string;
   translations: Partial<Record<Language, string>>;
   attachment_id?: string | null;
+  voice_url?: string | null;
+  voice_duration?: number | null;
   attachments?:
     | { file_name: string; file_path: string; file_type: string | null }
     | { file_name: string; file_path: string; file_type: string | null }[]
@@ -191,23 +155,17 @@ const reactionOptions: {
   key: ReactionKey;
   label: Record<Language, string>;
 }[] = [
-  { key: "got_it", emoji: "✅", label: { zh: "收到", ko: "확인", en: "Got it" } },
-  { key: "agree", emoji: "👍", label: { zh: "同意", ko: "동의", en: "Agree" } },
-  { key: "question", emoji: "❓", label: { zh: "有疑问", ko: "질문", en: "Question" } },
-  { key: "watching", emoji: "👀", label: { zh: "在看", ko: "보고 있어요", en: "Watching" } },
-  { key: "thanks", emoji: "🙏", label: { zh: "辛苦了", ko: "수고했어요", en: "Thanks" } },
+  { key: "got_it", emoji: "OK", label: { zh: "收到", ko: "확인", en: "Got it" } },
+  { key: "agree", emoji: "+1", label: { zh: "同意", ko: "동의", en: "Agree" } },
+  { key: "question", emoji: "?", label: { zh: "有疑问", ko: "질문", en: "Question" } },
+  { key: "watching", emoji: "...", label: { zh: "在看", ko: "확인 중", en: "Watching" } },
+  { key: "thanks", emoji: "thx", label: { zh: "谢谢", ko: "고마워", en: "Thanks" } },
 ];
 
 const languageLabels: Record<Language, string> = {
   zh: "中文",
   ko: "한국어",
   en: "English",
-};
-
-const speechRecognitionLocales: Record<Language, string> = {
-  zh: "zh-CN",
-  ko: "ko-KR",
-  en: "en-US",
 };
 
 const fileSummaryModeTitles: Record<FileSummaryMode, Record<Language, string>> = {
@@ -233,6 +191,63 @@ const fileActionLabels: Record<"preview" | "summarize", Record<Language, string>
     zh: "AI 总结",
     ko: "AI 요약",
     en: "AI Summary",
+  },
+};
+
+const roomStatusCopy: Record<
+  Language,
+  {
+    creatingPublic: string;
+    createdPublic: string;
+    createPublicFailed: string;
+    findingPublic: string;
+    joinedPublic: string;
+    joinFailed: string;
+    creatingDb: string;
+    createdDb: string;
+    findingDb: string;
+    joinedDb: string;
+    roomNotFound: string;
+  }
+> = {
+  zh: {
+    creatingPublic: "正在创建公开测试房间...",
+    createdPublic: "公开测试房间已创建，把面对面口令发给朋友即可加入同一个房间。",
+    createPublicFailed: "公开测试房间创建失败，请刷新后再试。",
+    findingPublic: "正在查找公开测试房间...",
+    joinedPublic: "已加入公开测试房间。",
+    joinFailed: "加入失败，请检查网络后再试。",
+    creatingDb: "正在创建 Supabase 房间...",
+    createdDb: "Supabase 房间已创建，后续消息会写入数据库。",
+    findingDb: "正在查找 Supabase 房间...",
+    joinedDb: "已加入 Supabase 房间。",
+    roomNotFound: "房间不存在或口令错误，请确认后再试。",
+  },
+  ko: {
+    creatingPublic: "공개 테스트 방을 만드는 중...",
+    createdPublic: "공개 테스트 방이 만들어졌습니다. 대면 코드를 친구에게 보내면 같은 방에 참여할 수 있습니다.",
+    createPublicFailed: "공개 테스트 방을 만들지 못했습니다. 새로고침 후 다시 시도하세요.",
+    findingPublic: "공개 테스트 방을 찾는 중...",
+    joinedPublic: "공개 테스트 방에 참여했습니다.",
+    joinFailed: "참여에 실패했습니다. 네트워크를 확인한 뒤 다시 시도하세요.",
+    creatingDb: "Supabase 방을 만드는 중...",
+    createdDb: "Supabase 방이 만들어졌습니다. 이후 메시지는 데이터베이스에 저장됩니다.",
+    findingDb: "Supabase 방을 찾는 중...",
+    joinedDb: "Supabase 방에 참여했습니다.",
+    roomNotFound: "방이 없거나 코드가 잘못되었습니다. 다시 확인해 주세요.",
+  },
+  en: {
+    creatingPublic: "Creating public test room...",
+    createdPublic: "Public test room created. Share the face-to-face code so friends can join the same room.",
+    createPublicFailed: "Could not create the public test room. Refresh and try again.",
+    findingPublic: "Finding public test room...",
+    joinedPublic: "Joined the public test room.",
+    joinFailed: "Join failed. Check the network and try again.",
+    creatingDb: "Creating Supabase room...",
+    createdDb: "Supabase room created. New messages will be saved to the database.",
+    findingDb: "Finding Supabase room...",
+    joinedDb: "Joined the Supabase room.",
+    roomNotFound: "Room not found or the code is incorrect. Please check and try again.",
   },
 };
 
@@ -262,6 +277,21 @@ const uiCopy: Record<
     summarizing: string;
     summarize: string;
     uploadFile: string;
+    voiceHold: string;
+    voiceRelease: (seconds: number) => string;
+    voiceProcessing: string;
+    voiceTitle: string;
+    voiceUnsupported: string;
+    retranscribeVoice: string;
+    summarizeVoice: string;
+    endAndSave: string;
+    defaultRoomTitle: (date: string) => string;
+    backHome: string;
+    filePreview: string;
+    close: string;
+    openOriginalFile: string;
+    myAiResults: string;
+    shareToRoom: string;
     translating: string;
     messagePlaceholder: (name: string) => string;
     members: string;
@@ -277,12 +307,12 @@ const uiCopy: Record<
     schoolEmail: "学校邮箱",
     alphaPassword: "Alpha 密码",
     displayName: "显示名称",
-    myLanguage: "我的主语言",
+    myLanguage: "我的母语",
     signUp: "注册 Alpha 账号",
     signIn: "登录 Alpha 账号",
-    checkingSession: "检查登录状态",
+    checkingSession: "正在检查登录状态",
     skipChecking: "跳过检查，进入演示工作台",
-    demoWorkspace: "暂时进入演示工作台",
+    demoWorkspace: "进入演示工作台",
     verifiedEmail: "已验证学校邮箱",
     lobbyTitle: "创建或加入讨论房间",
     switchIdentity: "切换身份",
@@ -297,6 +327,21 @@ const uiCopy: Record<
     summarizing: "总结中",
     summarize: "总结讨论",
     uploadFile: "上传文件",
+    voiceHold: "按住说话",
+    voiceRelease: (seconds) => `松开发送 ${seconds}s`,
+    voiceProcessing: "转文字中",
+    voiceTitle: "按住说话，松开发送",
+    voiceUnsupported: "当前浏览器不支持录音",
+    retranscribeVoice: "重新转写",
+    summarizeVoice: "总结语音",
+    endAndSave: "结束并保存",
+    defaultRoomTitle: (date) => `课堂讨论 ${date}`,
+    backHome: "返回首页",
+    filePreview: "文件预览",
+    close: "关闭",
+    openOriginalFile: "新窗口打开原文件",
+    myAiResults: "我的 AI 结果",
+    shareToRoom: "分享到房间",
     translating: "翻译中",
     messagePlaceholder: (name) => `以 ${name} 的视角输入消息`,
     members: "成员",
@@ -305,41 +350,56 @@ const uiCopy: Record<
     noFiles: "暂无文件",
     displayRule: "显示规则：大字永远是当前观看者母语，小字永远是发送者原文。",
     original: "原文",
-    seesFirst: (count, name, languageName) => `${count} members · ${name} sees ${languageName} first`,
+    seesFirst: (count, name, languageName) => `${count} 位成员 · ${name} 优先看 ${languageName}`,
   },
   ko: {
     schoolEmail: "학교 이메일",
     alphaPassword: "Alpha 비밀번호",
     displayName: "표시 이름",
-    myLanguage: "내 기본 언어",
+    myLanguage: "내 모국어",
     signUp: "Alpha 계정 만들기",
-    signIn: "Alpha 계정 로그인",
+    signIn: "Alpha 로그인",
     checkingSession: "로그인 상태 확인 중",
     skipChecking: "확인을 건너뛰고 데모로 이동",
-    demoWorkspace: "데모 워크스페이스로 이동",
-    verifiedEmail: "학교 이메일 인증됨",
-    lobbyTitle: "토론방 만들기 또는 참여하기",
-    switchIdentity: "계정 전환",
-    newRoom: "새 토론방",
+    demoWorkspace: "데모 작업 공간으로 이동",
+    verifiedEmail: "학교 이메일 인증 완료",
+    lobbyTitle: "토론방 만들기 또는 참여",
+    switchIdentity: "사용자 전환",
+    newRoom: "새 방",
     roomName: "방 이름",
     createRoom: "토론방 만들기",
-    joinRoom: "토론방 참여",
-    faceCode: "대면 참여 코드",
+    joinRoom: "방 참여",
+    faceCode: "대면 코드",
     join: "참여",
     inviteLink: "초대 링크",
     qrCode: "QR 코드",
     summarizing: "요약 중",
     summarize: "토론 요약",
     uploadFile: "파일 업로드",
+    voiceHold: "누르고 말하기",
+    voiceRelease: (seconds) => `놓으면 전송 ${seconds}s`,
+    voiceProcessing: "문자 변환 중",
+    voiceTitle: "누르고 말한 뒤 놓으면 전송됩니다",
+    voiceUnsupported: "현재 브라우저는 녹음을 지원하지 않습니다",
+    retranscribeVoice: "다시 변환",
+    summarizeVoice: "음성 요약",
+    endAndSave: "종료하고 저장",
+    defaultRoomTitle: (date) => `수업 토론 ${date}`,
+    backHome: "홈으로",
+    filePreview: "파일 미리보기",
+    close: "닫기",
+    openOriginalFile: "새 창에서 원본 열기",
+    myAiResults: "내 AI 결과",
+    shareToRoom: "방에 공유",
     translating: "번역 중",
     messagePlaceholder: (name) => `${name} 시점으로 메시지 입력`,
     members: "멤버",
     viewerPreview: "시점 미리보기",
     files: "파일",
     noFiles: "파일 없음",
-    displayRule: "표시 규칙: 큰 글씨는 현재 보는 사람의 모국어, 작은 글씨는 보낸 사람의 원문입니다.",
+    displayRule: "표시 규칙: 큰 글자는 항상 보는 사람의 모국어, 작은 글자는 항상 보낸 사람의 원문입니다.",
     original: "원문",
-    seesFirst: (count, name, languageName) => `${count}명 · ${name}님은 ${languageName}를 크게 봅니다`,
+    seesFirst: (count, name, languageName) => `${count}명 · ${name}님은 ${languageName}을 먼저 봅니다`,
   },
   en: {
     schoolEmail: "School email",
@@ -363,8 +423,23 @@ const uiCopy: Record<
     inviteLink: "Invite link",
     qrCode: "QR code",
     summarizing: "Summarizing",
-    summarize: "Summarize",
+    summarize: "Summarize discussion",
     uploadFile: "Upload file",
+    voiceHold: "Hold to talk",
+    voiceRelease: (seconds) => `Release to send ${seconds}s`,
+    voiceProcessing: "Transcribing",
+    voiceTitle: "Hold to talk, release to send",
+    voiceUnsupported: "Recording is not supported in this browser",
+    retranscribeVoice: "Retranscribe",
+    summarizeVoice: "Summarize voice",
+    endAndSave: "End and save",
+    defaultRoomTitle: (date) => `Class discussion ${date}`,
+    backHome: "Back home",
+    filePreview: "File preview",
+    close: "Close",
+    openOriginalFile: "Open original file",
+    myAiResults: "My AI results",
+    shareToRoom: "Share to room",
     translating: "Translating",
     messagePlaceholder: (name) => `Message as ${name}`,
     members: "Members",
@@ -402,7 +477,7 @@ const homeCopy: Record<
     historySubtitle: "查看之前保存的课堂讨论",
     join: "加入",
     login: "学校邮箱登录",
-    primaryLanguage: "我的主语言",
+    primaryLanguage: "我的母语",
     start: "开始讨论",
     startSubtitle: "下一步选择创建口令或输入口令加入",
   },
@@ -410,14 +485,14 @@ const homeCopy: Record<
     close: "닫기",
     displayName: "표시 이름",
     history: "기록",
-    historyEmpty: "토론을 종료하면 전체 채팅, 파일, AI 결과가 여기에 저장됩니다.",
-    historyMeta: (messages, files, aiResults) => `메시지 ${messages}개 · 파일 ${files}개 · AI 결과 ${aiResults}개`,
-    historySubtitle: "저장한 수업 토론 보기",
+    historyEmpty: "토론이 끝나면 전체 채팅, 파일, AI 결과가 여기에 저장됩니다.",
+    historyMeta: (messages, files, aiResults) => `${messages}개 메시지 · ${files}개 파일 · ${aiResults}개 AI 결과`,
+    historySubtitle: "저장된 수업 토론 보기",
     join: "참여",
     login: "학교 이메일 로그인",
-    primaryLanguage: "내 기본 언어",
+    primaryLanguage: "내 모국어",
     start: "토론 시작",
-    startSubtitle: "다음 단계에서 코드를 만들거나 입력합니다",
+    startSubtitle: "다음 단계에서 코드를 만들거나 입력해 참여합니다",
   },
   en: {
     close: "Close",
@@ -464,13 +539,13 @@ const roomChoiceCopy: Record<
   ko: {
     back: "홈으로",
     create: "코드 만들기",
-    createDescription: "4자리 대면 코드를 만들어 친구들이 같은 방에 들어오게 합니다.",
-    createTitle: "새 토론 만들기",
+    createDescription: "4자리 대면 코드를 만들어 같은 방에 참여할 수 있게 합니다.",
+    createTitle: "토론 만들기",
     join: "토론 참여",
-    joinDescription: "친구가 준 4자리 코드를 입력해 같은 토론방에 참여합니다.",
+    joinDescription: "친구가 준 4자리 코드를 입력해 같은 토론방에 들어갑니다.",
     joinPlaceholder: "4자리 코드 입력",
     joinTitle: "코드가 있어요",
-    subtitle: "새 토론을 만들거나 기존 코드로 참여하세요.",
+    subtitle: "새 토론을 만들거나 코드를 입력해 기존 토론에 참여하세요.",
     title: "토론 입장",
   },
   en: {
@@ -486,7 +561,6 @@ const roomChoiceCopy: Record<
     title: "Enter discussion",
   },
 };
-
 const sampleMembers: Member[] = [
   { id: "current-user", name: "Mina", email: "mina@yonsei.ac.kr", language: "zh" },
   { id: "chen", name: "Chen", email: "chen@yonsei.ac.kr", language: "zh" },
@@ -501,7 +575,7 @@ const initialMessages: Message[] = [
     senderId: "jiho",
     kind: "text",
     originalLanguage: "ko",
-    originalText: "오늘 회의에서 발표 순서랑 자료 정리 역할을 먼저 정하면 좋겠어요.",
+    originalText: "오늘 회의에서는 발표 순서와 자료 정리 담당을 먼저 정하면 좋겠습니다.",
     translations: {
       zh: "我觉得今天会议里最好先确定发表顺序和资料整理分工。",
       en: "It would be good to decide the presentation order and who organizes the materials first.",
@@ -515,7 +589,7 @@ const initialMessages: Message[] = [
     originalLanguage: "zh",
     originalText: "我可以负责整理案例部分，但想先确认教授要求的引用格式。",
     translations: {
-      ko: "저는 사례 부분 정리를 맡을 수 있는데, 먼저 교수님이 요구하신 인용 형식을 확인하고 싶어요.",
+      ko: "제가 사례 부분을 정리할 수 있지만, 먼저 교수님이 요구한 인용 형식을 확인하고 싶습니다.",
       en: "I can organize the case section, but I want to confirm the citation format required by the professor first.",
     },
     createdAt: "10:20",
@@ -528,7 +602,7 @@ const initialMessages: Message[] = [
     originalText: "I can draft the introduction if someone shares the assignment brief later.",
     translations: {
       zh: "如果之后有人分享作业要求，我可以先写 introduction 草稿。",
-      ko: "나중에 과제 안내문을 공유해 주면 제가 서론 초안을 작성할 수 있어요.",
+      ko: "나중에 누군가 과제 요약을 공유해 주면 제가 서론 초안을 작성할 수 있습니다.",
     },
     createdAt: "10:22",
   },
@@ -539,7 +613,7 @@ const initialMessages: Message[] = [
     originalLanguage: "zh",
     originalText: "我和 Mina 可以一起检查中文资料，然后把重点整理出来。",
     translations: {
-      ko: "Mina와 제가 중국어 자료를 함께 확인하고 핵심 내용을 정리할 수 있어요.",
+      ko: "Mina와 제가 중국어 자료를 함께 확인하고 핵심 내용을 정리할 수 있습니다.",
       en: "Mina and I can review the Chinese materials together and organize the key points.",
     },
     createdAt: "10:24",
@@ -549,7 +623,7 @@ const initialMessages: Message[] = [
     senderId: "seoah",
     kind: "text",
     originalLanguage: "ko",
-    originalText: "제가 교수님 공지에서 평가 기준 부분을 다시 확인해볼게요.",
+    originalText: "제가 교수님 공지에서 평가 기준 부분을 다시 확인해 보겠습니다.",
     translations: {
       zh: "我来重新确认一下教授公告里的评分标准部分。",
       en: "I will double-check the grading criteria section in the professor's notice.",
@@ -557,34 +631,21 @@ const initialMessages: Message[] = [
     createdAt: "10:25",
   },
 ];
-
 function nowLabel() {
   return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function structuredSummaryBlocks(text: string) {
-  const normalized = text
-    .replace(/\s*(【[^】]+】)\s*/g, "\n$1\n")
-    .replace(/([。.!?；;])\s*(\d+[.．、])/g, "$1\n$2")
-    .trim();
+  const normalized = text.replace(/\s*(【[^】]+】)\s*/g, "\n$1\n").trim();
   const parts = normalized.split(/(【[^】]+】)/g).map((part) => part.trim()).filter(Boolean);
 
-  if (!parts.some((part) => part.startsWith("【"))) {
-    return [{ body: normalized }];
-  }
+  if (!parts.some((part) => part.startsWith("【"))) return [{ body: normalized }];
 
   const blocks: { heading?: string; body: string }[] = [];
-
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
-
     if (part.startsWith("【")) {
-      blocks.push({
-        heading: part,
-        body: (parts[index + 1] ?? "")
-          .replace(/\s*(\d+[.．、])\s*/g, "\n$1 ")
-          .trim(),
-      });
+      blocks.push({ heading: part, body: (parts[index + 1] ?? "").trim() });
       index += 1;
     } else {
       blocks.push({ body: part });
@@ -754,15 +815,6 @@ function getOrCreateDemoUserId() {
   return nextDemoUserId;
 }
 
-function appendSpeechText(currentText: string, nextText: string, language: Language) {
-  const cleanText = nextText.trim();
-  if (!cleanText) return currentText;
-  if (!currentText.trim()) return cleanText;
-
-  const separator = language === "en" ? " " : "";
-  return `${currentText.trimEnd()}${separator}${cleanText}`;
-}
-
 function isSameMessage(left: Message, right: Message) {
   return (
     left.id === right.id &&
@@ -795,14 +847,17 @@ export default function Home() {
   const [demoUserId] = useState(getOrCreateDemoUserId);
   const [activeViewerId, setActiveViewerId] = useState(getOrCreateDemoUserId);
   const [messageText, setMessageText] = useState("");
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const speechBaseTextRef = useRef("");
-  const speechFinalTextRef = useRef("");
-  const [isListening, setIsListening] = useState(false);
-  const [speechSupported, setSpeechSupported] = useState(() => {
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingStartedAtRef = useRef(0);
+  const recordingTimerRef = useRef<number | null>(null);
+  const [recorderState, setRecorderState] = useState<RecorderState>("idle");
+  const recorderStateRef = useRef<RecorderState>("idle");
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [voiceSupported, setVoiceSupported] = useState(() => {
     if (typeof window === "undefined") return false;
-    const recognitionWindow = window as SpeechRecognitionWindow;
-    return Boolean(recognitionWindow.SpeechRecognition ?? recognitionWindow.webkitSpeechRecognition);
+    return Boolean(window.MediaRecorder && window.navigator?.mediaDevices?.getUserMedia);
   });
   const [messages, setMessages] = useState(initialMessages);
   const messageCountRef = useRef(initialMessages.length);
@@ -818,6 +873,11 @@ export default function Home() {
   const [isHistoryView, setIsHistoryView] = useState(false);
   const memberCountRef = useRef(0);
   const demoSyncInFlightRef = useRef(false);
+
+  function updateRecorderState(nextState: RecorderState) {
+    recorderStateRef.current = nextState;
+    setRecorderState(nextState);
+  }
 
   const members = useMemo<Member[]>(
     () => {
@@ -864,7 +924,9 @@ export default function Home() {
 
   useEffect(() => {
     return () => {
-      recognitionRef.current?.abort();
+      if (recordingTimerRef.current) window.clearInterval(recordingTimerRef.current);
+      mediaRecorderRef.current?.stop();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
@@ -887,7 +949,7 @@ export default function Home() {
       const { data, error } = await supabase
         .from("messages")
         .select(
-          "id, sender_id, kind, original_language, original_text, translations, attachment_id, attachments(file_name, file_path, file_type), created_at",
+          "id, sender_id, kind, original_language, original_text, translations, attachment_id, voice_url, voice_duration, attachments(file_name, file_path, file_type), created_at",
         )
         .eq("room_id", roomId)
         .order("created_at", { ascending: true });
@@ -912,6 +974,8 @@ export default function Home() {
             fileName: attachment?.file_name,
             filePath: attachment?.file_path,
             fileType: attachment?.file_type,
+            voiceUrl: row.voice_url ?? undefined,
+            voiceDuration: row.voice_duration ?? undefined,
             createdAt: new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
         }),
@@ -1048,6 +1112,8 @@ export default function Home() {
                 originalText: row.original_text,
                 translations: row.translations,
                 attachmentId: row.attachment_id,
+                voiceUrl: row.voice_url ?? undefined,
+                voiceDuration: row.voice_duration ?? undefined,
                 createdAt: new Date(row.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
               },
             ];
@@ -1208,7 +1274,7 @@ export default function Home() {
         return;
       }
 
-      setAuthStatus("注册成功，但 Supabase 仍要求邮箱确认。我们下一步会关闭开发期邮箱确认。");
+      setAuthStatus("注册成功，但 Supabase 仍要求邮箱确认。");
     } catch (error) {
       console.error(error);
       setAuthStatus("注册请求超时。临时链接网络不稳定时，可以先进入演示工作台测试。");
@@ -1284,7 +1350,9 @@ export default function Home() {
 
   async function createRoom() {
     const code = joinCode();
-    const generatedTitle = `课堂讨论 ${new Date().toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })}`;
+    const statusText = roomStatusCopy[language];
+    const dateLabel = new Date().toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
+    const generatedTitle = uiCopy[language].defaultRoomTitle(dateLabel);
     const nextRoomTitle = roomTitle.trim() || generatedTitle;
     setRoomTitle(nextRoomTitle);
     setStage("room");
@@ -1297,7 +1365,7 @@ export default function Home() {
     setActiveViewerId(currentMember.id);
 
     if (!sessionUserId || isTemporaryPublicHost()) {
-      setRoomStatus("正在创建公开测试房间...");
+      setRoomStatus(statusText.creatingPublic);
       setIsDbRoom(false);
       setIsPublicDemoRoom(true);
 
@@ -1321,11 +1389,11 @@ export default function Home() {
         setRoomMembers(data.room.members);
         setMessages(data.room.messages);
         setFiles(data.room.files);
-        setRoomStatus("公开测试房间已创建，把面对面口令发给朋友即可加入同一个房间。");
+        setRoomStatus(statusText.createdPublic);
       } catch (error) {
         console.error(error);
         setIsPublicDemoRoom(false);
-        setRoomStatus("公开测试房间创建失败，请刷新后再试。");
+        setRoomStatus(statusText.createPublicFailed);
       }
       return;
     }
@@ -1343,7 +1411,7 @@ export default function Home() {
       },
     ]);
     setIsDbRoom(true);
-    setRoomStatus("正在创建 Supabase 房间...");
+    setRoomStatus(statusText.creatingDb);
 
     const { error: roomError } = await supabase.from("rooms").insert({
       id: roomId,
@@ -1369,11 +1437,12 @@ export default function Home() {
       return;
     }
 
-    setRoomStatus("Supabase 房间已创建，后续消息会写入数据库。");
+    setRoomStatus(statusText.createdDb);
     await loadRoomMembers(roomId);
   }
 
   async function joinRoom() {
+    const statusText = roomStatusCopy[language];
     const code = normalizeJoinCode(roomCode);
     setRoomCode(code);
 
@@ -1385,7 +1454,7 @@ export default function Home() {
     if (!sessionUserId || isTemporaryPublicHost()) {
       setIsDbRoom(false);
       setIsPublicDemoRoom(true);
-      setRoomStatus("正在查找公开测试房间...");
+      setRoomStatus(statusText.findingPublic);
 
       try {
         const response = await fetch("/api/demo/rooms", {
@@ -1400,7 +1469,7 @@ export default function Home() {
         const data = (await response.json()) as DemoRoomApiResponse;
         if (!response.ok || !data.room) {
           setIsPublicDemoRoom(false);
-          setRoomStatus("房间不存在或口令错误，请确认后再试。");
+          setRoomStatus(statusText.roomNotFound);
           return;
         }
 
@@ -1413,17 +1482,17 @@ export default function Home() {
         setMessages(data.room.messages);
         setFiles(data.room.files);
         setActiveViewerId(currentMember.id);
-        setRoomStatus("已加入公开测试房间。");
+        setRoomStatus(statusText.joinedPublic);
       } catch (error) {
         console.error(error);
         setIsPublicDemoRoom(false);
-        setRoomStatus("加入失败，请检查网络后再试。");
+        setRoomStatus(statusText.joinFailed);
       }
       return;
     }
 
     setIsPublicDemoRoom(false);
-    setRoomStatus("正在查找 Supabase 房间...");
+    setRoomStatus(statusText.findingDb);
 
     const { data: room, error: roomError } = await supabase
       .from("rooms")
@@ -1439,7 +1508,7 @@ export default function Home() {
 
     if (!room) {
       setIsDbRoom(false);
-      setRoomStatus("房间不存在或口令错误，请确认后再试。");
+      setRoomStatus(statusText.roomNotFound);
       return;
     }
 
@@ -1470,7 +1539,7 @@ export default function Home() {
 
     await loadMessages(dbRoom.id);
     await loadRoomMembers(dbRoom.id);
-    setRoomStatus("已加入 Supabase 房间。");
+    setRoomStatus(statusText.joinedDb);
   }
 
   function openHistory(record: HistoryRecord) {
@@ -1533,6 +1602,13 @@ export default function Home() {
     const sender = members.find((member) => member.id === message.senderId);
     const senderLanguage = sender?.language ?? message.originalLanguage;
     return `${languageLabels[senderLanguage]} ${copy.original} · ${message.originalText}`;
+  }
+
+  function formatVoiceDuration(seconds?: number) {
+    if (!seconds) return "0:00";
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = String(seconds % 60).padStart(2, "0");
+    return `${minutes}:${remainingSeconds}`;
   }
 
   function toggleReactionLocally(messageId: string, reactionKey: ReactionKey, userId: string) {
@@ -1617,100 +1693,57 @@ export default function Home() {
     }
   }
 
-  function toggleSpeechRecognition() {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-      return;
-    }
-
-    const recognitionWindow = window as SpeechRecognitionWindow;
-    const Recognition = recognitionWindow.SpeechRecognition ?? recognitionWindow.webkitSpeechRecognition;
-
-    if (!Recognition) {
-      setSpeechSupported(false);
-      setRoomStatus("Voice input is not supported in this browser. Please use Chrome or Edge.");
-      return;
-    }
-
-    const speaker = isPublicDemoRoom ? currentMember : activeViewer;
-    const recognition = new Recognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = speechRecognitionLocales[speaker.language];
-    speechBaseTextRef.current = messageText;
-    speechFinalTextRef.current = "";
-
-    recognition.onresult = (event) => {
-      let finalTranscript = "";
-      let interimTranscript = "";
-
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        const transcript = result[0]?.transcript ?? "";
-        if (result.isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-
-      speechFinalTextRef.current = appendSpeechText(speechFinalTextRef.current, finalTranscript, speaker.language);
-      const recognizedText = appendSpeechText(speechFinalTextRef.current, interimTranscript, speaker.language);
-      setMessageText(appendSpeechText(speechBaseTextRef.current, recognizedText, speaker.language));
-    };
-
-    recognition.onerror = (event) => {
-      console.error(event);
-      setIsListening(false);
-      setRoomStatus(
-        event.error === "not-allowed"
-          ? "Microphone permission was blocked. Please allow microphone access and try again."
-          : "Voice recognition failed. Please try again.",
-      );
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-      recognitionRef.current = null;
-      speechBaseTextRef.current = "";
-      speechFinalTextRef.current = "";
-    };
-
-    recognitionRef.current = recognition;
-    setIsListening(true);
-    setRoomStatus(`Listening to ${speaker.name}. Speak now, then tap the microphone again to stop.`);
-
-    try {
-      recognition.start();
-    } catch (error) {
-      console.error(error);
-      setIsListening(false);
-      recognitionRef.current = null;
-      setRoomStatus("Voice recognition could not start. Please try again.");
+  function stopRecordingTimer() {
+    if (recordingTimerRef.current) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
     }
   }
 
-  async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const text = messageText.trim();
-    if (!text) return;
-    recognitionRef.current?.stop();
+  function stopVoiceStream() {
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+  }
 
-    const sender = isPublicDemoRoom ? currentMember : activeViewer;
-    const optimisticMessageId = crypto.randomUUID();
-    const optimisticMessage = {
-      id: optimisticMessageId,
-      senderId: sender.id,
-      kind: "text" as const,
-      originalLanguage: sender.language,
-      originalText: text,
-      translations: {},
-      createdAt: nowLabel(),
-      isPending: true,
-    };
+  async function maybeUploadVoice(blob: Blob) {
+    if (!supabaseConfigured || !currentRoomId) return undefined;
 
-    setMessageText("");
+    try {
+      const voiceId = crypto.randomUUID();
+      const filePath = `${currentRoomId}/${voiceId}.webm`;
+      const { error } = await supabase.storage.from("voice-messages").upload(filePath, blob, {
+        cacheControl: "3600",
+        contentType: blob.type || "audio/webm",
+        upsert: false,
+      });
+
+      if (error) throw error;
+
+      const { data } = supabase.storage.from("voice-messages").getPublicUrl(filePath);
+      return data.publicUrl;
+    } catch (error) {
+      console.warn("Voice upload skipped", error);
+      return undefined;
+    }
+  }
+
+  async function transcribeVoice(blob: Blob, voiceLanguage: Language) {
+    const file = new File([blob], "voice.webm", { type: blob.type || "audio/webm" });
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("language", voiceLanguage);
+
+    const response = await fetch("/api/ai/transcribe", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = (await response.json()) as { text?: string; error?: string };
+    if (!response.ok || !data.text) throw new Error(data.error ?? "Voice transcription failed");
+    return data.text;
+  }
+
+  async function publishMessage(optimisticMessage: Message, textForTranslation: string, sender: Member) {
     setMessages((current) => [...current, optimisticMessage]);
 
     if (isPublicDemoRoom && currentRoomId) {
@@ -1728,18 +1761,18 @@ export default function Home() {
         const data = (await response.json()) as DemoRoomApiResponse;
         if (!response.ok || !data.room) throw new Error(data.error ?? "Demo message failed");
 
-        setRoomStatus("消息已发送，正在后台生成翻译。");
+        setRoomStatus("消息已发送，正在生成翻译...");
 
-        void translateText(text, sender.language)
+        void translateText(textForTranslation, sender.language)
           .then(async (translations) => {
-            const translatedMessage = {
+            const translatedMessage: Message = {
               ...optimisticMessage,
               translations,
               isPending: false,
             };
 
             setMessages((current) =>
-              current.map((message) => (message.id === optimisticMessageId ? translatedMessage : message)),
+              current.map((message) => (message.id === optimisticMessage.id ? translatedMessage : message)),
             );
 
             await fetch("/api/demo/rooms", {
@@ -1757,7 +1790,7 @@ export default function Home() {
             console.error(error);
             setMessages((current) =>
               current.map((message) =>
-                message.id === optimisticMessageId ? { ...message, isPending: false } : message,
+                message.id === optimisticMessage.id ? { ...message, isPending: false } : message,
               ),
             );
             setRoomStatus("消息已发送，但翻译生成失败。");
@@ -1765,22 +1798,18 @@ export default function Home() {
         return;
       } catch (error) {
         console.error(error);
-        setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
+        setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id));
         setRoomStatus("公开测试房间消息发送失败，请稍后再试。");
         return;
       }
     }
-    setRoomStatus("正在生成中/韩/英翻译...");
-    const translations = await translateText(text, sender.language);
 
-    const nextMessage = {
-      id: optimisticMessageId,
-      senderId: sender.id,
-      kind: "text" as const,
-      originalLanguage: sender.language,
-      originalText: text,
+    setRoomStatus("正在生成中 / 韩 / 英翻译...");
+    const translations = await translateText(textForTranslation, sender.language);
+    const nextMessage: Message = {
+      ...optimisticMessage,
       translations,
-      createdAt: nowLabel(),
+      isPending: false,
     };
 
     if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
@@ -1788,14 +1817,16 @@ export default function Home() {
         id: nextMessage.id,
         room_id: currentRoomId,
         sender_id: sessionUserId,
-        kind: "text",
+        kind: nextMessage.kind,
         original_language: nextMessage.originalLanguage,
         original_text: nextMessage.originalText,
         translations: nextMessage.translations,
+        voice_url: nextMessage.voiceUrl ?? null,
+        voice_duration: nextMessage.voiceDuration ?? null,
       });
 
       if (error) {
-        setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
+        setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id));
         setRoomStatus(`发送失败：${error.message}`);
         return;
       }
@@ -1806,35 +1837,223 @@ export default function Home() {
       return;
     }
 
-    if (isPublicDemoRoom && currentRoomId) {
-      try {
-        const response = await fetch("/api/demo/rooms", {
+    setMessages((current) => current.map((message) => (message.id === optimisticMessage.id ? nextMessage : message)));
+  }
+
+  async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = messageText.trim();
+    if (!text || recorderStateRef.current !== "idle") return;
+
+    const sender = isPublicDemoRoom ? currentMember : activeViewer;
+    const optimisticMessage: Message = {
+      id: crypto.randomUUID(),
+      senderId: sender.id,
+      kind: "text",
+      originalLanguage: sender.language,
+      originalText: text,
+      translations: {},
+      createdAt: nowLabel(),
+      isPending: true,
+    };
+
+    setMessageText("");
+    await publishMessage(optimisticMessage, text, sender);
+  }
+
+  async function startVoiceRecording() {
+    if (recorderStateRef.current !== "idle") return;
+
+    if (!window.isSecureContext) {
+      setVoiceSupported(false);
+      setRoomStatus("当前地址不允许使用麦克风。电脑请用 http://localhost:3000，手机请用 HTTPS 线上地址测试。");
+      return;
+    }
+
+    if (!window.MediaRecorder || !window.navigator?.mediaDevices?.getUserMedia) {
+      setVoiceSupported(false);
+      setRoomStatus("当前浏览器不支持按住说话，请使用 Chrome 或 Edge。");
+      return;
+    }
+
+    try {
+      const stream = await window.navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorderOptions = MediaRecorder.isTypeSupported("audio/webm") ? { mimeType: "audio/webm" } : undefined;
+      const recorder = new MediaRecorder(stream, recorderOptions);
+      mediaStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+      // Recorder timing is driven by a browser event handler, not render.
+      // eslint-disable-next-line react-hooks/purity
+      recordingStartedAtRef.current = Date.now();
+      setRecordingSeconds(0);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+
+      recorder.onstop = () => {
+        const duration = Math.max(1, Math.round((Date.now() - recordingStartedAtRef.current) / 1000));
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        audioChunksRef.current = [];
+        void sendVoiceBlob(blob, duration);
+      };
+
+      recorder.start();
+      updateRecorderState("recording");
+      setRoomStatus("正在录音，松开发送。");
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds(Math.max(1, Math.round((Date.now() - recordingStartedAtRef.current) / 1000)));
+      }, 250);
+    } catch (error) {
+      console.error(error);
+      updateRecorderState("idle");
+      setVoiceSupported(false);
+      stopVoiceStream();
+      setRoomStatus("无法使用麦克风。请允许浏览器麦克风权限后再试。");
+    }
+  }
+
+  function stopVoiceRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (recorderStateRef.current !== "recording" || !recorder || recorder.state === "inactive") return;
+    stopRecordingTimer();
+    updateRecorderState("processing");
+    setRoomStatus("语音已收到，正在转文字...");
+    recorder.stop();
+    stopVoiceStream();
+  }
+
+  async function sendVoiceBlob(blob: Blob, duration: number) {
+    const sender = isPublicDemoRoom ? currentMember : activeViewer;
+
+    if (blob.size < 1000) {
+      updateRecorderState("idle");
+      setRoomStatus("录音太短，没有发送。按住说话后再松开。");
+      return;
+    }
+
+    try {
+      const localVoiceUrl = URL.createObjectURL(blob);
+      const [transcript, uploadedVoiceUrl] = await Promise.all([
+        transcribeVoice(blob, sender.language),
+        maybeUploadVoice(blob),
+      ]);
+
+      const voiceMessage: Message = {
+        id: crypto.randomUUID(),
+        senderId: sender.id,
+        kind: "voice",
+        originalLanguage: sender.language,
+        originalText: transcript,
+        translations: {},
+        voiceUrl: uploadedVoiceUrl ?? localVoiceUrl,
+        voiceDuration: duration,
+        createdAt: nowLabel(),
+        isPending: true,
+      };
+
+      updateRecorderState("idle");
+      setRecordingSeconds(0);
+      await publishMessage(voiceMessage, transcript, sender);
+    } catch (error) {
+      console.error(error);
+      updateRecorderState("idle");
+      setRecordingSeconds(0);
+      setRoomStatus(error instanceof Error ? `语音转文字失败：${error.message}` : "语音转文字失败，请稍后再试。");
+    }
+  }
+
+  async function summarizeVoiceMessage(message: Message) {
+    setIsSummarizing(true);
+    setRoomStatus("正在总结这条语音...");
+
+    try {
+      const response = await fetch("/api/ai/summarize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: [
+            {
+              senderName: members.find((member) => member.id === message.senderId)?.name ?? "Voice",
+              originalLanguage: message.originalLanguage,
+              originalText: message.originalText,
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) throw new Error("Voice summary request failed");
+
+      const data = (await response.json()) as {
+        summary: Record<Language, string>;
+        source: "deepseek" | "mock";
+      };
+
+      setPrivateAiResults((current) => [
+        {
+          id: crypto.randomUUID(),
+          kind: "discussion_summary",
+          title: "语音总结",
+          summary: data.summary,
+          source: data.source,
+          createdAt: nowLabel(),
+        },
+        ...current,
+      ]);
+      setRoomStatus("语音总结已生成，只在你的 AI 结果里可见。");
+    } catch (error) {
+      console.error(error);
+      setRoomStatus("语音总结失败，请稍后再试。");
+    } finally {
+      setIsSummarizing(false);
+    }
+  }
+
+  async function retranscribeVoiceMessage(message: Message) {
+    if (!message.voiceUrl) {
+      setRoomStatus("这条语音没有可读取的音频，无法重新转写。");
+      return;
+    }
+
+    setRoomStatus("正在重新转写这条语音...");
+
+    try {
+      const audioResponse = await fetch(message.voiceUrl);
+      if (!audioResponse.ok) throw new Error("Voice file could not be loaded");
+
+      const blob = await audioResponse.blob();
+      const transcript = await transcribeVoice(blob, message.originalLanguage);
+      const translations = await translateText(transcript, message.originalLanguage);
+      const updatedMessage: Message = {
+        ...message,
+        originalText: transcript,
+        translations,
+        isPending: false,
+      };
+
+      setMessages((current) => current.map((item) => (item.id === message.id ? updatedMessage : item)));
+
+      if (isPublicDemoRoom && currentRoomId) {
+        await fetch("/api/demo/rooms", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            action: "send",
+            action: "updateMessage",
             roomId: currentRoomId,
             member: currentMember,
-            message: nextMessage,
+            message: updatedMessage,
           }),
         });
-        const data = (await response.json()) as DemoRoomApiResponse;
-        if (!response.ok || !data.room) throw new Error(data.error ?? "Demo message failed");
-
-        setRoomMembers(data.room.members);
-        setMessages(data.room.messages);
-        setFiles(data.room.files);
-        setRoomStatus("消息已发送到公开测试房间。");
-        return;
-      } catch (error) {
-        console.error(error);
-        setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
-        setRoomStatus("公开测试房间消息发送失败，请稍后再试。");
-        return;
       }
-    }
 
-    setMessages((current) => current.map((message) => (message.id === optimisticMessageId ? nextMessage : message)));
+      setRoomStatus("语音已重新转写并更新翻译。");
+    } catch (error) {
+      console.error(error);
+      setRoomStatus("重新转写失败：音频可能只保存在发送者本机，或远端语音文件不可读取。");
+    }
   }
 
   async function summarizeDiscussion() {
@@ -1842,7 +2061,7 @@ export default function Home() {
     setRoomStatus("正在生成讨论总结...");
 
     try {
-      const discussionMessages = messages.filter((message) => message.kind === "text");
+      const discussionMessages = messages.filter((message) => message.kind === "text" || message.kind === "voice");
       const response = await fetch("/api/ai/summarize", {
         method: "POST",
         headers: {
@@ -1868,7 +2087,7 @@ export default function Home() {
         {
           id: crypto.randomUUID(),
           kind: "discussion_summary",
-          title: "讨论总结",
+          title: copy.summarize,
           summary: data.summary,
           source: data.source,
           createdAt: nowLabel(),
@@ -1877,7 +2096,9 @@ export default function Home() {
       ]);
 
       setRoomStatus(
-        data.source === "deepseek" ? "讨论总结已生成，只在你的 AI 结果里可见。" : "讨论总结已生成（mock fallback），只在你的 AI 结果里可见。",
+        data.source === "deepseek"
+          ? "讨论总结已生成，只在你的 AI 结果里可见。"
+          : "讨论总结已生成（mock fallback），只在你的 AI 结果里可见。",
       );
     } catch (error) {
       console.error(error);
@@ -1974,7 +2195,7 @@ export default function Home() {
   function fileCardText(fileName: string, fileLanguage: Language) {
     const text: Record<Language, string> = {
       zh: `${fileName} 已上传。你可以先查看文件卡片，需要时再生成自己的 AI 总结。`,
-      ko: `${fileName} 파일이 업로드되었습니다. 필요할 때 내 AI 요약을 생성할 수 있습니다.`,
+      ko: `${fileName} 파일이 업로드되었습니다. 먼저 파일 카드를 확인하고 필요할 때 개인 AI 요약을 만들 수 있습니다.`,
       en: `${fileName} was uploaded. You can review the file card first and generate your own AI summary when needed.`,
     };
 
@@ -2015,7 +2236,7 @@ export default function Home() {
     try {
       const file = await fileForMessage(message);
       if (!file) {
-        setRoomStatus("这个临时演示文件只保存在上传者当前浏览器里。正式房间上传到 Storage 后，可以跨设备再次总结。");
+        setRoomStatus("这个临时演示文件只保存在上传者当前浏览器里。上传到 Storage 后可以跨设备再次总结。");
         return;
       }
 
@@ -2055,7 +2276,7 @@ export default function Home() {
       if (!file) {
         setFilePreview({
           fileName,
-          text: "这个临时演示文件只保存在上传者当前浏览器里。正式房间上传到 Storage 后，可以跨设备再次打开原文件。",
+          text: "这个临时演示文件只保存在上传者当前浏览器里。上传到 Storage 后可以跨设备再次打开原文件。",
         });
         setRoomStatus("没有找到可打开的远端文件。");
         return;
@@ -2074,7 +2295,7 @@ export default function Home() {
         return;
       }
 
-      setRoomStatus("正在提取文档文字预览...");
+      setRoomStatus("正在提取文件文字预览...");
       const formData = new FormData();
       formData.append("file", file);
       const response = await fetch("/api/ai/file-preview", {
@@ -2159,7 +2380,7 @@ export default function Home() {
         setRoomMembers(demoData.room.members);
         setMessages(demoData.room.messages);
         setFiles(demoData.room.files);
-        setRoomStatus("文件卡片已发送到房间。需要时可以点击“AI 总结”。");
+        setRoomStatus("文件卡片已发送到房间。需要时可以点击 AI 总结。");
       } catch (error) {
         console.error(error);
         setRoomStatus("公开测试房间文件消息保存失败，请稍后再试。");
@@ -2173,7 +2394,7 @@ export default function Home() {
       setFiles((current) => [...current, file.name]);
       setMessages((current) => [...current, fileMessage]);
       setIsUploadingFile(false);
-      setRoomStatus("文件卡片已发送。需要时可以点击“AI 总结”。");
+      setRoomStatus("文件卡片已发送。需要时可以点击 AI 总结。");
       return;
     }
 
@@ -2222,14 +2443,14 @@ export default function Home() {
 
     if (messageError) {
       setIsUploadingFile(false);
-      setRoomStatus(`文件摘要消息失败：${messageError.message}`);
+      setRoomStatus(`文件消息保存失败：${messageError.message}`);
       return;
     }
 
     setFiles((current) => [...current, file.name]);
     await loadMessages(currentRoomId);
     setIsUploadingFile(false);
-    setRoomStatus("文件卡片已上传到房间。需要时可以点击“AI 总结”。");
+    setRoomStatus("文件卡片已上传到房间。需要时可以点击 AI 总结。");
   }
 
   if (stage === "auth") {
@@ -2305,7 +2526,7 @@ export default function Home() {
             <div className="brand-mark" aria-hidden="true" />
             <div>
               <p className="eyebrow">AI Study Room</p>
-              <h1>폴리톡</h1>
+              <h1>PolyTalk</h1>
             </div>
           </div>
 
@@ -2465,12 +2686,25 @@ export default function Home() {
               <strong>{roomCode}</strong>
             </div>
           </div>
+          <div className="member-strip" aria-label={copy.members}>
+            {members.map((member) => (
+              <button
+                className={member.id === activeViewer.id ? "member-dot active" : "member-dot"}
+                key={member.id}
+                onClick={() => setActiveViewerId(member.id)}
+                type="button"
+              >
+                <span>{languageLabels[member.language].slice(0, 2)}</span>
+                <strong>{member.name}</strong>
+              </button>
+            ))}
+          </div>
         </div>
         <div className="room-actions">
           {isHistoryView ? (
             <button className="summary-action" onClick={() => returnHome()} type="button">
               <History size={18} />
-              返回首页
+              {copy.backHome}
             </button>
           ) : (
             <>
@@ -2479,7 +2713,7 @@ export default function Home() {
                 {isSummarizing ? copy.summarizing : copy.summarize}
               </button>
               <button className="text-button end-action" onClick={endDiscussion} type="button">
-                结束并保存
+                {copy.endAndSave}
               </button>
             </>
           )}
@@ -2488,7 +2722,7 @@ export default function Home() {
 
       {roomStatus ? <p className="room-status">{roomStatus}</p> : null}
 
-      <section className="room-grid">
+      <section className={filePreview || privateAiResults.length ? "room-grid has-side-panel" : "room-grid chat-only"}>
         <div className="chat-area">
           <div className="message-list">
             {messages.map((message) => {
@@ -2527,6 +2761,17 @@ export default function Home() {
                       </>
                     ) : (
                       <>
+                        {message.kind === "voice" ? (
+                          <div className="voice-card">
+                            <div className="voice-card-head">
+                              <span className="voice-icon">
+                                <Mic size={15} />
+                              </span>
+                              <strong>Voice {formatVoiceDuration(message.voiceDuration)}</strong>
+                            </div>
+                            {message.voiceUrl ? <audio controls preload="metadata" src={message.voiceUrl} /> : null}
+                          </div>
+                        ) : null}
                         <p className="main-text">{mainText(message)}</p>
                         <p className="secondary-text">{secondaryText(message)}</p>
                       </>
@@ -2540,6 +2785,18 @@ export default function Home() {
                         <button onClick={() => summarizeUploadedFile(message)} type="button">
                           <Sparkles size={15} />
                           {fileActionLabels.summarize[activeViewer.language]}
+                        </button>
+                      </div>
+                    ) : null}
+                    {!isHistoryView && message.kind === "voice" ? (
+                      <div className="file-actions voice-actions">
+                        <button onClick={() => retranscribeVoiceMessage(message)} type="button">
+                          <Mic size={15} />
+                          {copy.retranscribeVoice}
+                        </button>
+                        <button onClick={() => summarizeVoiceMessage(message)} type="button">
+                          <Sparkles size={15} />
+                          {copy.summarizeVoice}
                         </button>
                       </div>
                     ) : null}
@@ -2591,14 +2848,32 @@ export default function Home() {
                   onChange={(event) => setMessageText(event.target.value)}
                 />
                 <button
-                  aria-label={isListening ? "Stop voice input" : "Start voice input"}
-                  className={isListening ? "voice-button listening" : "voice-button"}
-                  disabled={!speechSupported}
-                  onClick={toggleSpeechRecognition}
-                  title={speechSupported ? "Voice input" : "Voice input is not supported in this browser"}
+                  aria-label={copy.voiceTitle}
+                  className={recorderState === "recording" ? "voice-hold-button recording" : "voice-hold-button"}
+                  disabled={!voiceSupported || recorderState === "processing"}
+                  onContextMenu={(event) => event.preventDefault()}
+                  onPointerDown={(event) => {
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    void startVoiceRecording();
+                  }}
+                  onPointerCancel={stopVoiceRecording}
+                  onPointerLeave={stopVoiceRecording}
+                  onPointerUp={stopVoiceRecording}
+                  title={voiceSupported ? copy.voiceTitle : copy.voiceUnsupported}
                   type="button"
                 >
-                  {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                  {recorderState === "processing" ? (
+                    <Loader2 className="spin" size={17} />
+                  ) : (
+                    <Mic size={17} />
+                  )}
+                  <span>
+                    {recorderState === "recording"
+                      ? copy.voiceRelease(recordingSeconds || 1)
+                      : recorderState === "processing"
+                        ? copy.voiceProcessing
+                        : copy.voiceHold}
+                  </span>
                 </button>
                 <button className="send-button" type="submit">
                   <ArrowUp size={18} />
@@ -2608,31 +2883,14 @@ export default function Home() {
           )}
         </div>
 
+        {filePreview || privateAiResults.length ? (
         <aside className="side-panel">
-          <section className="members-section">
-            <p className="label">{copy.members}</p>
-            <div className="member-list">
-              {members.map((member) => (
-                <button
-                  className={member.id === activeViewer.id ? "member active" : "member"}
-                  key={member.id}
-                  onClick={() => setActiveViewerId(member.id)}
-                  type="button"
-                >
-                  <span>{languageLabels[member.language].slice(0, 2)}</span>
-                  <strong>{member.name}</strong>
-                  <small>{member.email}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-
           {filePreview ? (
             <section className="private-ai-section">
               <div className="side-title-row">
-                <p className="label">文件预览</p>
+                <p className="label">{copy.filePreview}</p>
                 <button className="mini-action" onClick={() => setFilePreview(null)} type="button">
-                  关闭
+                  {copy.close}
                 </button>
               </div>
               <article className="private-ai-card">
@@ -2646,7 +2904,7 @@ export default function Home() {
                   <>
                     <iframe className="file-preview-document" src={filePreview.documentUrl} title={filePreview.fileName} />
                     <a className="mini-action file-open-link" href={filePreview.documentUrl} rel="noreferrer" target="_blank">
-                      新窗口打开原文件
+                      {copy.openOriginalFile}
                     </a>
                   </>
                 ) : null}
@@ -2657,7 +2915,7 @@ export default function Home() {
 
           {privateAiResults.length ? (
             <section className="private-ai-section">
-              <p className="label">我的 AI 结果</p>
+              <p className="label">{copy.myAiResults}</p>
               <div className="private-ai-list">
                 {privateAiResults.map((result) => (
                   <article className="private-ai-card" key={result.id}>
@@ -2669,7 +2927,7 @@ export default function Home() {
                     {!isHistoryView ? (
                       <button className="mini-action share" onClick={() => sharePrivateAiResult(result)} type="button">
                         <Send size={14} />
-                        分享到房间
+                        {copy.shareToRoom}
                       </button>
                     ) : null}
                   </article>
@@ -2678,7 +2936,11 @@ export default function Home() {
             </section>
           ) : null}
         </aside>
+        ) : null}
       </section>
     </main>
   );
 }
+
+
+

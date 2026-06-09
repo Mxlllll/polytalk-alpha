@@ -17,8 +17,26 @@ values (
 )
 on conflict (id) do nothing;
 
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'voice-messages',
+  'voice-messages',
+  true,
+  10485760,
+  array[
+    'audio/webm',
+    'audio/mp4',
+    'audio/mpeg',
+    'audio/wav',
+    'audio/ogg'
+  ]
+)
+on conflict (id) do nothing;
+
 drop policy if exists "room members can upload room files" on storage.objects;
 drop policy if exists "room members can read room files" on storage.objects;
+drop policy if exists "room members can upload voice messages" on storage.objects;
+drop policy if exists "public can read voice messages" on storage.objects;
 
 create policy "room members can upload room files"
   on storage.objects for insert
@@ -35,3 +53,16 @@ create policy "room members can read room files"
     bucket_id = 'room-files'
     and public.is_room_member((storage.foldername(name))[1]::uuid)
   );
+
+create policy "room members can upload voice messages"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'voice-messages'
+    and public.is_room_member((storage.foldername(name))[1]::uuid)
+  );
+
+create policy "public can read voice messages"
+  on storage.objects for select
+  to public
+  using (bucket_id = 'voice-messages');

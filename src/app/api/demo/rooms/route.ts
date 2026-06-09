@@ -14,12 +14,16 @@ type DemoMember = {
 type DemoMessage = {
   id: string;
   senderId: string;
-  kind: "text" | "file" | "file_summary" | "discussion_summary";
+  kind: "text" | "voice" | "file" | "file_summary" | "discussion_summary";
   originalLanguage: Language;
   originalText: string;
   translations: Partial<Record<Language, string>>;
   attachmentId?: string | null;
   fileName?: string;
+  filePath?: string;
+  fileType?: string | null;
+  voiceUrl?: string;
+  voiceDuration?: number;
   createdAt: string;
   isPending?: boolean;
   reactions?: MessageReactions;

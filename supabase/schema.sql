@@ -28,11 +28,13 @@ create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
   room_id uuid not null references public.rooms(id) on delete cascade,
   sender_id uuid not null references public.profiles(id) on delete cascade,
-  kind text not null default 'text' check (kind in ('text', 'file_summary', 'discussion_summary')),
+  kind text not null default 'text' check (kind in ('text', 'voice', 'file_summary', 'discussion_summary')),
   original_language text not null check (original_language in ('zh', 'ko', 'en')),
   original_text text not null,
   translations jsonb not null default '{}'::jsonb,
   attachment_id uuid,
+  voice_url text,
+  voice_duration integer,
   created_at timestamptz not null default now()
 );
 
