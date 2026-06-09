@@ -255,7 +255,8 @@ const roomStatusCopy: Record<
     findingDb: string;
     joinedDb: string;
     roomNotFound: string;
-    syncDisconnected: string;
+    syncReconnecting: string;
+    syncExpired: string;
   }
 > = {
   zh: {
@@ -270,7 +271,8 @@ const roomStatusCopy: Record<
     findingDb: "正在查找 Supabase 房间...",
     joinedDb: "已加入 Supabase 房间。",
     roomNotFound: "房间不存在或口令错误，请确认后再试。",
-    syncDisconnected: "房间同步暂时中断，正在自动重连...",
+    syncReconnecting: "房间同步暂时中断，正在重试...",
+    syncExpired: "房间连接已失效。请返回后重新创建或加入房间。",
   },
   ko: {
     creatingPublic: "공개 테스트 방을 만드는 중...",
@@ -284,7 +286,8 @@ const roomStatusCopy: Record<
     findingDb: "Supabase 방을 찾는 중...",
     joinedDb: "Supabase 방에 참여했습니다.",
     roomNotFound: "방이 없거나 코드가 잘못되었습니다. 다시 확인해 주세요.",
-    syncDisconnected: "방 동기화가 잠시 끊겼습니다. 자동으로 다시 연결하는 중입니다...",
+    syncReconnecting: "방 동기화가 잠시 끊겼습니다. 다시 연결을 시도 중입니다...",
+    syncExpired: "방 연결이 만료되었습니다. 돌아가서 방을 다시 만들거나 참여해 주세요.",
   },
   en: {
     creatingPublic: "Creating public test room...",
@@ -298,7 +301,8 @@ const roomStatusCopy: Record<
     findingDb: "Finding Supabase room...",
     joinedDb: "Joined the Supabase room.",
     roomNotFound: "Room not found or the code is incorrect. Please check and try again.",
-    syncDisconnected: "Room sync paused for a moment. Reconnecting automatically...",
+    syncReconnecting: "Room sync paused. Retrying...",
+    syncExpired: "Room connection expired. Go back and create or join a room again.",
   },
 };
 
@@ -906,6 +910,7 @@ export default function Home() {
   const [isDbRoom, setIsDbRoom] = useState(false);
   const [isPublicDemoRoom, setIsPublicDemoRoom] = useState(false);
   const [roomStatus, setRoomStatus] = useState("");
+  const [isRoomConnectionLost, setIsRoomConnectionLost] = useState(false);
   const [roomMembers, setRoomMembers] = useState<Member[] | null>(null);
   const [demoUserId] = useState(getOrCreateDemoUserId);
   const [activeViewerId, setActiveViewerId] = useState(getOrCreateDemoUserId);
@@ -991,6 +996,8 @@ export default function Home() {
       Object.values(typingMembers).filter((member) => member.id !== currentMember.id),
     [currentMember.id, typingMembers],
   );
+  const composerDisabled = isRoomConnectionLost || recorderState === "processing";
+  const roomConnectionText = roomStatusCopy[activeViewer.language];
 
   useEffect(() => {
     messageCountRef.current = messages.length;
@@ -1241,7 +1248,7 @@ export default function Home() {
   }, [currentRoomId, isDbRoom, loadMessages, loadRoomMembers, supabase]);
 
   useEffect(() => {
-    if (!isPublicDemoRoom || !currentRoomId) return;
+    if (!isPublicDemoRoom || !currentRoomId || isRoomConnectionLost) return;
     const statusText = roomStatusCopy[activeViewer.language];
 
     const refreshTimer = window.setInterval(() => {
@@ -1251,9 +1258,12 @@ export default function Home() {
       syncDemoRoom(currentRoomId)
         .then(() => {
           demoSyncFailureCountRef.current = 0;
+          setIsRoomConnectionLost(false);
           setRoomStatus((current) =>
             current === "公开测试房间同步失败，请刷新后再试。" ||
-            Object.values(roomStatusCopy).some((item) => item.syncDisconnected === current)
+            Object.values(roomStatusCopy).some(
+              (item) => item.syncReconnecting === current || item.syncExpired === current,
+            )
               ? ""
               : current,
           );
@@ -1261,8 +1271,14 @@ export default function Home() {
         .catch((error) => {
           console.error(error);
           demoSyncFailureCountRef.current += 1;
+          if (demoSyncFailureCountRef.current >= 8) {
+            setIsRoomConnectionLost(true);
+            setIsPublicDemoRoom(false);
+            setRoomStatus(statusText.syncExpired);
+            return;
+          }
           if (demoSyncFailureCountRef.current >= 3) {
-            setRoomStatus(statusText.syncDisconnected);
+            setRoomStatus(statusText.syncReconnecting);
           }
         })
         .finally(() => {
@@ -1271,7 +1287,7 @@ export default function Home() {
     }, 900);
 
     return () => window.clearInterval(refreshTimer);
-  }, [activeViewer.language, currentRoomId, isPublicDemoRoom, syncDemoRoom]);
+  }, [activeViewer.language, currentRoomId, isPublicDemoRoom, isRoomConnectionLost, syncDemoRoom]);
 
   useEffect(() => {
     if (!isPublicDemoRoom || !currentRoomId || !supabaseConfigured) return;
@@ -1560,6 +1576,8 @@ export default function Home() {
     setFilePreview(null);
     setRoomMembers([currentMember]);
     setActiveViewerId(currentMember.id);
+    setIsRoomConnectionLost(false);
+    demoSyncFailureCountRef.current = 0;
 
     setRoomStatus(statusText.creatingPublic);
     setIsDbRoom(false);
@@ -1598,6 +1616,8 @@ export default function Home() {
     const statusText = roomStatusCopy[language];
     const code = normalizeJoinCode(roomCode);
     setRoomCode(code);
+    setIsRoomConnectionLost(false);
+    demoSyncFailureCountRef.current = 0;
 
     if (!code || code.replace(/\D/g, "").length !== 4) {
       setRoomStatus("请输入 4 位面对面口令，例如 4821。");
@@ -1648,6 +1668,7 @@ export default function Home() {
     setIsHistoryView(true);
     setIsDbRoom(false);
     setIsPublicDemoRoom(false);
+    setIsRoomConnectionLost(false);
     setCurrentRoomId(record.id);
     setRoomTitle(record.title);
     setRoomCode(record.joinCode);
@@ -1665,6 +1686,8 @@ export default function Home() {
     setIsHistoryView(false);
     setIsDbRoom(false);
     setIsPublicDemoRoom(false);
+    setIsRoomConnectionLost(false);
+    demoSyncFailureCountRef.current = 0;
     setCurrentRoomId(null);
     setRoomMembers(null);
     setFilePreview(null);
@@ -1837,6 +1860,11 @@ export default function Home() {
   }
 
   function handleMessageTextChange(nextText: string) {
+    if (isRoomConnectionLost) {
+      setRoomStatus(roomConnectionText.syncExpired);
+      return;
+    }
+
     messageTextRef.current = nextText;
     setMessageText(nextText);
 
@@ -2096,6 +2124,10 @@ export default function Home() {
   async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = messageText.trim();
+    if (isRoomConnectionLost) {
+      setRoomStatus(roomConnectionText.syncExpired);
+      return;
+    }
     if (!text || recorderStateRef.current !== "idle") return;
 
     const sender = isPublicDemoRoom ? currentMember : activeViewer;
@@ -2119,6 +2151,11 @@ export default function Home() {
   }
 
   async function startVoiceRecording() {
+    if (isRoomConnectionLost) {
+      setRoomStatus(roomConnectionText.syncExpired);
+      return;
+    }
+
     if (recorderStateRef.current !== "idle") return;
 
     if (!window.isSecureContext) {
@@ -2183,6 +2220,13 @@ export default function Home() {
   }
 
   async function sendVoiceBlob(blob: Blob, duration: number) {
+    if (isRoomConnectionLost) {
+      updateRecorderState("idle");
+      setRecordingSeconds(0);
+      setRoomStatus(roomConnectionText.syncExpired);
+      return;
+    }
+
     const sender = isPublicDemoRoom ? currentMember : activeViewer;
 
     if (blob.size < 1000) {
@@ -2349,6 +2393,11 @@ export default function Home() {
   }
 
   async function summarizeDiscussion() {
+    if (isRoomConnectionLost) {
+      setRoomStatus(roomConnectionText.syncExpired);
+      return;
+    }
+
     setIsSummarizing(true);
     setRoomStatus("正在生成讨论总结...");
 
@@ -2622,6 +2671,10 @@ export default function Home() {
   async function handleFile(fileList: FileList | null) {
     const file = fileList?.[0];
     if (!file) return;
+    if (isRoomConnectionLost) {
+      setRoomStatus(roomConnectionText.syncExpired);
+      return;
+    }
 
     setIsUploadingFile(true);
     setRoomStatus("正在上传文件卡片...");
@@ -3003,7 +3056,7 @@ export default function Home() {
             </button>
           ) : (
             <>
-              <button className="summary-action" disabled={isSummarizing} onClick={summarizeDiscussion} type="button">
+              <button className="summary-action" disabled={isSummarizing || isRoomConnectionLost} onClick={summarizeDiscussion} type="button">
                 {isSummarizing ? <Loader2 className="spin" size={18} /> : <Sparkles size={18} />}
                 {isSummarizing ? copy.summarizing : copy.summarize}
               </button>
@@ -3015,7 +3068,16 @@ export default function Home() {
         </div>
       </header>
 
-      {roomStatus ? <p className="room-status">{roomStatus}</p> : null}
+      {roomStatus ? (
+        <div className={isRoomConnectionLost ? "room-status lost" : "room-status"}>
+          <span>{roomStatus}</span>
+          {isRoomConnectionLost ? (
+            <button onClick={() => returnHome()} type="button">
+              {copy.backHome}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <section className={filePreview || privateAiResults.length ? "room-grid has-side-panel" : "room-grid chat-only"}>
         <div className="chat-area">
@@ -3185,24 +3247,25 @@ export default function Home() {
                 </p>
               ) : null}
               <div className="composer-bar">
-                <label className="file-button" title={copy.uploadFile}>
+                <label className={composerDisabled || isUploadingFile ? "file-button disabled" : "file-button"} title={copy.uploadFile}>
                   {isUploadingFile ? <Loader2 className="spin" size={18} /> : <Plus size={20} />}
                   <input
                     accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.txt,.md,.csv"
-                    disabled={isUploadingFile}
+                    disabled={composerDisabled || isUploadingFile}
                     onChange={(event) => handleFile(event.target.files)}
                     type="file"
                   />
                 </label>
                 <input
-                  placeholder={copy.messagePlaceholder(activeViewer.name)}
+                  disabled={composerDisabled}
+                  placeholder={isRoomConnectionLost ? roomConnectionText.syncExpired : copy.messagePlaceholder(activeViewer.name)}
                   value={messageText}
                   onChange={(event) => handleMessageTextChange(event.target.value)}
                 />
                 <button
                   aria-label={copy.voiceTitle}
                   className={recorderState === "recording" ? "voice-hold-button recording" : "voice-hold-button"}
-                  disabled={!voiceSupported || recorderState === "processing"}
+                  disabled={!voiceSupported || composerDisabled}
                   onContextMenu={(event) => event.preventDefault()}
                   onPointerDown={(event) => {
                     event.currentTarget.setPointerCapture(event.pointerId);
@@ -3227,7 +3290,7 @@ export default function Home() {
                         : copy.voiceHold}
                   </span>
                 </button>
-                <button className="send-button" type="submit">
+                <button className="send-button" disabled={composerDisabled || !messageText.trim()} type="submit">
                   <ArrowUp size={18} />
                 </button>
               </div>

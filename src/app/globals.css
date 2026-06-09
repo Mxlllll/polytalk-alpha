@@ -705,12 +705,36 @@ input:hover {
 }
 
 .room-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   border-bottom: 1px solid rgba(36, 34, 42, 0.06);
   padding: 9px 22px;
   color: var(--ink-soft);
   background: rgba(255, 227, 163, 0.38);
   font-size: 12px;
   font-weight: 820;
+}
+
+.room-status.lost {
+  color: #5e3324;
+  background: rgba(255, 214, 200, 0.58);
+}
+
+.room-status button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(36, 34, 42, 0.1);
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.room-status button:hover {
+  background: white;
 }
 
 .room-grid {
@@ -1235,6 +1259,11 @@ input:hover {
   background: rgba(191, 216, 255, 0.55);
 }
 
+.composer-bar .file-button.disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
 .composer-bar .voice-button {
   border-color: transparent;
   color: var(--ink-soft);
@@ -1281,6 +1310,11 @@ input:hover {
 
 .composer-bar .send-button {
   background: var(--primary);
+}
+
+.composer-bar .send-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .file-button input {
