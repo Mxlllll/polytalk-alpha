@@ -157,6 +157,15 @@ type DemoRoomApiResponse = {
   error?: string;
 };
 
+type DemoRoomRealtimeRow = {
+  id: string;
+  title: string;
+  join_code: string;
+  members: Member[] | null;
+  messages: Message[] | null;
+  files: string[] | null;
+};
+
 const reactionOptions: {
   emoji: string;
   key: ReactionKey;
@@ -957,6 +966,61 @@ export default function Home() {
     [displayName, email, language, supabase, supabaseConfigured],
   );
 
+  const mergeDemoRoomSnapshot = useCallback((room: DemoRoomApiResponse["room"]) => {
+    if (!room) return;
+
+    setCurrentRoomId(room.id);
+    setRoomTitle(room.title);
+    setRoomCode(room.joinCode);
+
+    if (room.members.length) {
+      setRoomMembers((current) => {
+        const existingMembers = current ?? [];
+        const existingIds = new Set(existingMembers.map((item) => item.id));
+        const nextMembers = room.members.filter((item) => !existingIds.has(item.id));
+        return nextMembers.length ? [...existingMembers, ...nextMembers] : current;
+      });
+    }
+
+    if (room.messages.length) {
+      setMessages((current) => {
+        const incomingById = new Map(room.messages.map((message) => [message.id, message]));
+        let didReplace = false;
+        const replacedMessages = current.map((message) => {
+          const incomingMessage = incomingById.get(message.id);
+          if (!incomingMessage || isSameMessage(message, incomingMessage)) return message;
+          didReplace = true;
+          return incomingMessage;
+        });
+        const existingIds = new Set(replacedMessages.map((item) => item.id));
+        const nextMessages = room.messages.filter((item) => !existingIds.has(item.id));
+        return nextMessages.length || didReplace ? [...replacedMessages, ...nextMessages] : current;
+      });
+    }
+
+    if (room.files.length) {
+      setFiles((current) => {
+        const existingFiles = new Set(current);
+        const nextFiles = room.files.filter((item) => !existingFiles.has(item));
+        return nextFiles.length ? [...current, ...nextFiles] : current;
+      });
+    }
+  }, []);
+
+  const mergeRealtimeDemoRoom = useCallback(
+    (row: DemoRoomRealtimeRow) => {
+      mergeDemoRoomSnapshot({
+        id: row.id,
+        title: row.title,
+        joinCode: row.join_code,
+        members: row.members ?? [],
+        messages: row.messages ?? [],
+        files: row.files ?? [],
+      });
+    },
+    [mergeDemoRoomSnapshot],
+  );
+
   const loadMessages = useCallback(
     async (roomId: string) => {
       const { data, error } = await supabase
@@ -1053,44 +1117,11 @@ export default function Home() {
       const data = (await response.json()) as DemoRoomApiResponse;
       if (!response.ok || !data.room) throw new Error(data.error ?? "Demo room sync failed");
 
-      setCurrentRoomId(data.room.id);
-      setRoomTitle(data.room.title);
-      setRoomCode(data.room.joinCode);
-      if (data.room.members.length) {
-        setRoomMembers((current) => {
-          const existingMembers = current ?? [];
-          const existingIds = new Set(existingMembers.map((item) => item.id));
-          const nextMembers = data.room?.members.filter((item) => !existingIds.has(item.id)) ?? [];
-          return nextMembers.length ? [...existingMembers, ...nextMembers] : current;
-        });
-      }
-      if (data.room.messages.length) {
-        setMessages((current) => {
-          const incomingMessages = data.room?.messages ?? [];
-          const incomingById = new Map(incomingMessages.map((message) => [message.id, message]));
-          let didReplace = false;
-          const replacedMessages = current.map((message) => {
-            const incomingMessage = incomingById.get(message.id);
-            if (!incomingMessage || isSameMessage(message, incomingMessage)) return message;
-            didReplace = true;
-            return incomingMessage;
-          });
-          const existingIds = new Set(replacedMessages.map((item) => item.id));
-          const nextMessages = incomingMessages.filter((item) => !existingIds.has(item.id));
-          return nextMessages.length || didReplace ? [...replacedMessages, ...nextMessages] : current;
-        });
-      }
-      if (data.room.files.length) {
-        setFiles((current) => {
-          const existingFiles = new Set(current);
-          const nextFiles = data.room?.files.filter((item) => !existingFiles.has(item)) ?? [];
-          return nextFiles.length ? [...current, ...nextFiles] : current;
-        });
-      }
+      mergeDemoRoomSnapshot(data.room);
       setActiveViewerId(member.id);
       return data.room;
     },
-    [currentMember, roomCode],
+    [currentMember, mergeDemoRoomSnapshot, roomCode],
   );
 
   useEffect(() => {
@@ -1167,10 +1198,35 @@ export default function Home() {
         .finally(() => {
           demoSyncInFlightRef.current = false;
         });
-    }, 3500);
+    }, 900);
 
     return () => window.clearInterval(refreshTimer);
   }, [currentRoomId, isPublicDemoRoom, syncDemoRoom]);
+
+  useEffect(() => {
+    if (!isPublicDemoRoom || !currentRoomId || !supabaseConfigured) return;
+
+    const channel = supabase
+      .channel(`demo-room-${currentRoomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "demo_rooms",
+          filter: `id=eq.${currentRoomId}`,
+        },
+        (payload) => {
+          if (!payload.new || !("id" in payload.new)) return;
+          mergeRealtimeDemoRoom(payload.new as DemoRoomRealtimeRow);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentRoomId, isPublicDemoRoom, mergeRealtimeDemoRoom, supabase, supabaseConfigured]);
 
   useEffect(() => {
     async function initializeSession() {

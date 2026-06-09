@@ -30,3 +30,16 @@ create policy "public can update demo rooms"
   to anon, authenticated
   using (true)
   with check (true);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'demo_rooms'
+  ) then
+    alter publication supabase_realtime add table public.demo_rooms;
+  end if;
+end $$;
