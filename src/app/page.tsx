@@ -262,6 +262,7 @@ const roomStatusCopy: Record<
     findingDb: string;
     joinedDb: string;
     roomNotFound: string;
+    syncDisconnected: string;
   }
 > = {
   zh: {
@@ -276,6 +277,7 @@ const roomStatusCopy: Record<
     findingDb: "正在查找 Supabase 房间...",
     joinedDb: "已加入 Supabase 房间。",
     roomNotFound: "房间不存在或口令错误，请确认后再试。",
+    syncDisconnected: "房间同步暂时中断，正在自动重连...",
   },
   ko: {
     creatingPublic: "공개 테스트 방을 만드는 중...",
@@ -289,6 +291,7 @@ const roomStatusCopy: Record<
     findingDb: "Supabase 방을 찾는 중...",
     joinedDb: "Supabase 방에 참여했습니다.",
     roomNotFound: "방이 없거나 코드가 잘못되었습니다. 다시 확인해 주세요.",
+    syncDisconnected: "방 동기화가 잠시 끊겼습니다. 자동으로 다시 연결하는 중입니다...",
   },
   en: {
     creatingPublic: "Creating public test room...",
@@ -302,6 +305,7 @@ const roomStatusCopy: Record<
     findingDb: "Finding Supabase room...",
     joinedDb: "Joined the Supabase room.",
     roomNotFound: "Room not found or the code is incorrect. Please check and try again.",
+    syncDisconnected: "Room sync paused for a moment. Reconnecting automatically...",
   },
 };
 
@@ -953,6 +957,7 @@ export default function Home() {
   const [typingMembers, setTypingMembers] = useState<Record<string, TypingMember>>({});
   const memberCountRef = useRef(0);
   const demoSyncInFlightRef = useRef(false);
+  const demoSyncFailureCountRef = useRef(0);
   const preTranslateTimerRef = useRef<number | null>(null);
   const preTranslateRequestIdRef = useRef(0);
   const typingChannelRef = useRef<TypingChannel | null>(null);
@@ -1253,6 +1258,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!isPublicDemoRoom || !currentRoomId) return;
+    const statusText = roomStatusCopy[activeViewer.language];
 
     const refreshTimer = window.setInterval(() => {
       if (demoSyncInFlightRef.current || document.visibilityState === "hidden") return;
@@ -1260,13 +1266,20 @@ export default function Home() {
       demoSyncInFlightRef.current = true;
       syncDemoRoom(currentRoomId)
         .then(() => {
+          demoSyncFailureCountRef.current = 0;
           setRoomStatus((current) =>
-            current === "公开测试房间同步失败，请刷新后再试。" ? "" : current,
+            current === "公开测试房间同步失败，请刷新后再试。" ||
+            Object.values(roomStatusCopy).some((item) => item.syncDisconnected === current)
+              ? ""
+              : current,
           );
         })
         .catch((error) => {
           console.error(error);
-          setRoomStatus("公开测试房间同步失败，请刷新后再试。");
+          demoSyncFailureCountRef.current += 1;
+          if (demoSyncFailureCountRef.current >= 3) {
+            setRoomStatus(statusText.syncDisconnected);
+          }
         })
         .finally(() => {
           demoSyncInFlightRef.current = false;
@@ -1274,7 +1287,7 @@ export default function Home() {
     }, 900);
 
     return () => window.clearInterval(refreshTimer);
-  }, [currentRoomId, isPublicDemoRoom, syncDemoRoom]);
+  }, [activeViewer.language, currentRoomId, isPublicDemoRoom, syncDemoRoom]);
 
   useEffect(() => {
     if (!isPublicDemoRoom || !currentRoomId || !supabaseConfigured) return;

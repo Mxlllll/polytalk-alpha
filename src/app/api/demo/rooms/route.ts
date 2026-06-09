@@ -242,6 +242,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Demo room not found." }, { status: 404 });
   }
 
+  if (body.action === "sync") {
+    return NextResponse.json({
+      room: serializeRoom(room, {
+        memberCount: body.memberCount,
+        messageCount: body.messageCount,
+        fileCount: body.fileCount,
+      }),
+    });
+  }
+
   if (body.member) {
     upsertMember(room, body.member);
     room.updatedAt = Date.now();
@@ -290,15 +300,6 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({
-    room: serializeRoom(
-      room,
-      body.action === "sync"
-        ? {
-            memberCount: body.memberCount,
-            messageCount: body.messageCount,
-            fileCount: body.fileCount,
-          }
-        : undefined,
-    ),
+    room: serializeRoom(room),
   });
 }
