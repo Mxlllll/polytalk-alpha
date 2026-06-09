@@ -1,0 +1,6 @@
+node_modules
+.next
+work
+outputs
+tsconfig.tsbuildinfo
+npm-debug.log*

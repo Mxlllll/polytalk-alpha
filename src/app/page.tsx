@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   Eye,
@@ -8,12 +8,14 @@ import {
   History,
   Loader2,
   LogOut,
+  Mic,
+  MicOff,
   Plus,
   Send,
   Sparkles,
   Users,
 } from "lucide-react";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { createSupabaseBrowserClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { buildMockTranslations } from "@/lib/ai/mock";
 
 type Language = "zh" | "ko" | "en";
@@ -21,6 +23,47 @@ type Stage = "home" | "auth" | "lobby" | "room";
 type FileSummaryMode = "course" | "assignment";
 type ReactionKey = "got_it" | "agree" | "question" | "watching" | "thanks";
 type MessageReactions = Partial<Record<ReactionKey, string[]>>;
+
+type SpeechRecognitionAlternativeLike = {
+  transcript: string;
+};
+
+type SpeechRecognitionResultLike = {
+  readonly isFinal: boolean;
+  readonly [index: number]: SpeechRecognitionAlternativeLike;
+};
+
+type SpeechRecognitionEventLike = Event & {
+  readonly resultIndex: number;
+  readonly results: {
+    readonly length: number;
+    readonly [index: number]: SpeechRecognitionResultLike;
+  };
+};
+
+type SpeechRecognitionErrorEventLike = Event & {
+  readonly error?: string;
+};
+
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  abort: () => void;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionConstructorLike = new () => SpeechRecognitionLike;
+
+type SpeechRecognitionWindow = Window &
+  typeof globalThis & {
+    SpeechRecognition?: SpeechRecognitionConstructorLike;
+    webkitSpeechRecognition?: SpeechRecognitionConstructorLike;
+  };
 
 type Member = {
   id: string;
@@ -119,6 +162,14 @@ type HistoryRecord = {
   aiResults: PrivateAiResult[];
 };
 
+type LocalAlphaAccount = {
+  id: string;
+  email: string;
+  password: string;
+  displayName: string;
+  language: Language;
+};
+
 type DemoRoomApiResponse = {
   room?: {
     id: string;
@@ -127,6 +178,10 @@ type DemoRoomApiResponse = {
     members: Member[];
     messages: Message[];
     files: string[];
+    memberCount?: number;
+    messageCount?: number;
+    fileCount?: number;
+    updatedAt?: number;
   };
   error?: string;
 };
@@ -147,6 +202,12 @@ const languageLabels: Record<Language, string> = {
   zh: "中文",
   ko: "한국어",
   en: "English",
+};
+
+const speechRecognitionLocales: Record<Language, string> = {
+  zh: "zh-CN",
+  ko: "ko-KR",
+  en: "en-US",
 };
 
 const fileSummaryModeTitles: Record<FileSummaryMode, Record<Language, string>> = {
@@ -560,6 +621,69 @@ function historyStorageKey(userId: string) {
   return `polytalk-history-${userId}`;
 }
 
+function localAccountsStorageKey() {
+  return "polytalk-alpha-local-accounts";
+}
+
+function normalizeEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function validateAuthFields(email: string, password: string, displayName?: string) {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+    return "请输入有效的邮箱地址。";
+  }
+
+  if (password.length < 6) {
+    return "密码至少需要 6 位。";
+  }
+
+  if (displayName !== undefined && !displayName.trim()) {
+    return "请输入显示名称。";
+  }
+
+  return "";
+}
+
+function authErrorMessage(errorMessage: string) {
+  const normalized = errorMessage.toLowerCase();
+
+  if (normalized.includes("invalid login") || normalized.includes("invalid credentials")) {
+    return "邮箱或密码不正确。";
+  }
+
+  if (normalized.includes("already registered") || normalized.includes("already exists")) {
+    return "这个邮箱已经注册过，请直接登录。";
+  }
+
+  if (normalized.includes("email not confirmed")) {
+    return "邮箱还没有确认，请先完成邮箱验证。";
+  }
+
+  if (normalized.includes("fetch") || normalized.includes("failed") || normalized.includes("timeout")) {
+    return "登录服务暂时连接失败，请稍后再试。";
+  }
+
+  return errorMessage || "账号请求失败，请稍后再试。";
+}
+
+function loadLocalAlphaAccounts(): LocalAlphaAccount[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    return JSON.parse(window.localStorage.getItem(localAccountsStorageKey()) ?? "[]") as LocalAlphaAccount[];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalAlphaAccounts(accounts: LocalAlphaAccount[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(localAccountsStorageKey(), JSON.stringify(accounts));
+}
+
 function loadLocalHistory(userId: string): HistoryRecord[] {
   if (typeof window === "undefined") return [];
 
@@ -630,8 +754,28 @@ function getOrCreateDemoUserId() {
   return nextDemoUserId;
 }
 
+function appendSpeechText(currentText: string, nextText: string, language: Language) {
+  const cleanText = nextText.trim();
+  if (!cleanText) return currentText;
+  if (!currentText.trim()) return cleanText;
+
+  const separator = language === "en" ? " " : "";
+  return `${currentText.trimEnd()}${separator}${cleanText}`;
+}
+
+function isSameMessage(left: Message, right: Message) {
+  return (
+    left.id === right.id &&
+    left.originalText === right.originalText &&
+    left.isPending === right.isPending &&
+    JSON.stringify(left.translations ?? {}) === JSON.stringify(right.translations ?? {}) &&
+    JSON.stringify(left.reactions ?? {}) === JSON.stringify(right.reactions ?? {})
+  );
+}
+
 export default function Home() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const supabaseConfigured = useMemo(() => isSupabaseConfigured(), []);
   const [stage, setStage] = useState<Stage>("home");
   const [email, setEmail] = useState("mina@yonsei.ac.kr");
   const [password, setPassword] = useState("polytalk123");
@@ -651,8 +795,19 @@ export default function Home() {
   const [demoUserId] = useState(getOrCreateDemoUserId);
   const [activeViewerId, setActiveViewerId] = useState(getOrCreateDemoUserId);
   const [messageText, setMessageText] = useState("");
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechBaseTextRef = useRef("");
+  const speechFinalTextRef = useRef("");
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const recognitionWindow = window as SpeechRecognitionWindow;
+    return Boolean(recognitionWindow.SpeechRecognition ?? recognitionWindow.webkitSpeechRecognition);
+  });
   const [messages, setMessages] = useState(initialMessages);
+  const messageCountRef = useRef(initialMessages.length);
   const [files, setFiles] = useState<string[]>([]);
+  const fileCountRef = useRef(0);
   const [localFiles, setLocalFiles] = useState<Record<string, File>>({});
   const [privateAiResults, setPrivateAiResults] = useState<PrivateAiResult[]>([]);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
@@ -661,6 +816,8 @@ export default function Home() {
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>(() => loadLocalHistory(getOrCreateDemoUserId()));
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isHistoryView, setIsHistoryView] = useState(false);
+  const memberCountRef = useRef(0);
+  const demoSyncInFlightRef = useRef(false);
 
   const members = useMemo<Member[]>(
     () => {
@@ -693,9 +850,27 @@ export default function Home() {
     [demoUserId, displayName, email, language, sessionUserId],
   );
 
+  useEffect(() => {
+    messageCountRef.current = messages.length;
+  }, [messages.length]);
+
+  useEffect(() => {
+    memberCountRef.current = members.length;
+  }, [members.length]);
+
+  useEffect(() => {
+    fileCountRef.current = files.length;
+  }, [files.length]);
+
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.abort();
+    };
+  }, []);
+
   const ensureProfile = useCallback(
     async (userId: string, userEmail = email) => {
-      if (!userId) return;
+      if (!userId || !supabaseConfigured) return;
 
       await supabase.from("profiles").upsert({
         id: userId,
@@ -704,7 +879,7 @@ export default function Home() {
         preferred_language: language,
       });
     },
-    [displayName, email, language, supabase],
+    [displayName, email, language, supabase, supabaseConfigured],
   );
 
   const loadMessages = useCallback(
@@ -787,7 +962,14 @@ export default function Home() {
       const response = await fetch("/api/demo/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "sync", roomId, member }),
+        body: JSON.stringify({
+          action: "sync",
+          roomId,
+          member,
+          memberCount: memberCountRef.current,
+          messageCount: messageCountRef.current,
+          fileCount: fileCountRef.current,
+        }),
       });
 
       const data = (await response.json()) as DemoRoomApiResponse;
@@ -796,9 +978,37 @@ export default function Home() {
       setCurrentRoomId(data.room.id);
       setRoomTitle(data.room.title);
       setRoomCode(data.room.joinCode);
-      setRoomMembers(data.room.members);
-      setMessages(data.room.messages);
-      setFiles(data.room.files);
+      if (data.room.members.length) {
+        setRoomMembers((current) => {
+          const existingMembers = current ?? [];
+          const existingIds = new Set(existingMembers.map((item) => item.id));
+          const nextMembers = data.room?.members.filter((item) => !existingIds.has(item.id)) ?? [];
+          return nextMembers.length ? [...existingMembers, ...nextMembers] : current;
+        });
+      }
+      if (data.room.messages.length) {
+        setMessages((current) => {
+          const incomingMessages = data.room?.messages ?? [];
+          const incomingById = new Map(incomingMessages.map((message) => [message.id, message]));
+          let didReplace = false;
+          const replacedMessages = current.map((message) => {
+            const incomingMessage = incomingById.get(message.id);
+            if (!incomingMessage || isSameMessage(message, incomingMessage)) return message;
+            didReplace = true;
+            return incomingMessage;
+          });
+          const existingIds = new Set(replacedMessages.map((item) => item.id));
+          const nextMessages = incomingMessages.filter((item) => !existingIds.has(item.id));
+          return nextMessages.length || didReplace ? [...replacedMessages, ...nextMessages] : current;
+        });
+      }
+      if (data.room.files.length) {
+        setFiles((current) => {
+          const existingFiles = new Set(current);
+          const nextFiles = data.room?.files.filter((item) => !existingFiles.has(item)) ?? [];
+          return nextFiles.length ? [...current, ...nextFiles] : current;
+        });
+      }
       setActiveViewerId(member.id);
       return data.room;
     },
@@ -861,17 +1071,43 @@ export default function Home() {
     if (!isPublicDemoRoom || !currentRoomId) return;
 
     const refreshTimer = window.setInterval(() => {
-      syncDemoRoom(currentRoomId).catch((error) => {
-        console.error(error);
-        setRoomStatus("公开测试房间同步失败，请刷新后再试。");
-      });
-    }, 3000);
+      if (demoSyncInFlightRef.current || document.visibilityState === "hidden") return;
+
+      demoSyncInFlightRef.current = true;
+      syncDemoRoom(currentRoomId)
+        .catch((error) => {
+          console.error(error);
+          setRoomStatus("公开测试房间同步失败，请刷新后再试。");
+        })
+        .finally(() => {
+          demoSyncInFlightRef.current = false;
+        });
+    }, 3500);
 
     return () => window.clearInterval(refreshTimer);
   }, [currentRoomId, isPublicDemoRoom, syncDemoRoom]);
 
   useEffect(() => {
     async function initializeSession() {
+      if (!supabaseConfigured) {
+        const localSessionId = window.localStorage.getItem("polytalk-alpha-local-session");
+        const localAccount = loadLocalAlphaAccounts().find((account) => account.id === localSessionId);
+
+        if (localAccount) {
+          setSessionUserId(localAccount.id);
+          setActiveViewerId(localAccount.id);
+          setEmail(localAccount.email);
+          setDisplayName(localAccount.displayName);
+          setLanguage(localAccount.language);
+          setAuthStatus("演示账号已登录，可以继续使用。");
+        } else {
+          setAuthStatus("当前未配置 Supabase，注册/登录将使用本机演示账号。");
+        }
+
+        setIsCheckingSession(false);
+        return;
+      }
+
       try {
         const code = new URLSearchParams(window.location.search).get("code");
 
@@ -904,11 +1140,49 @@ export default function Home() {
     }
 
     initializeSession();
-  }, [ensureProfile, supabase]);
+  }, [ensureProfile, supabase, supabaseConfigured]);
 
   async function signUpWithPassword() {
     setIsAuthenticating(true);
     setAuthStatus("");
+    const validationMessage = validateAuthFields(email, password, displayName);
+
+    if (validationMessage) {
+      setAuthStatus(validationMessage);
+      setIsAuthenticating(false);
+      return;
+    }
+
+    if (!supabaseConfigured) {
+      const normalizedEmail = normalizeEmail(email);
+      const accounts = loadLocalAlphaAccounts();
+
+      if (accounts.some((account) => account.email === normalizedEmail)) {
+        setAuthStatus("这个邮箱已经注册过，请直接登录。");
+        setIsAuthenticating(false);
+        return;
+      }
+
+      const account: LocalAlphaAccount = {
+        id: `local-${crypto.randomUUID()}`,
+        email: normalizedEmail,
+        password,
+        displayName: displayName.trim(),
+        language,
+      };
+
+      saveLocalAlphaAccounts([...accounts, account]);
+      window.localStorage.setItem("polytalk-alpha-local-session", account.id);
+      setSessionUserId(account.id);
+      setActiveViewerId(account.id);
+      setEmail(account.email);
+      setDisplayName(account.displayName);
+      setLanguage(account.language);
+      setAuthStatus("演示账号注册成功，已进入工作台。");
+      setStage("home");
+      setIsAuthenticating(false);
+      return;
+    }
 
     try {
       const { data, error } = await withTimeout(
@@ -921,7 +1195,7 @@ export default function Home() {
       );
 
       if (error) {
-        setAuthStatus(error.message);
+        setAuthStatus(authErrorMessage(error.message));
         return;
       }
 
@@ -946,6 +1220,37 @@ export default function Home() {
   async function signInWithPassword() {
     setIsAuthenticating(true);
     setAuthStatus("");
+    const validationMessage = validateAuthFields(email, password);
+
+    if (validationMessage) {
+      setAuthStatus(validationMessage);
+      setIsAuthenticating(false);
+      return;
+    }
+
+    if (!supabaseConfigured) {
+      const normalizedEmail = normalizeEmail(email);
+      const account = loadLocalAlphaAccounts().find(
+        (storedAccount) => storedAccount.email === normalizedEmail && storedAccount.password === password,
+      );
+
+      if (!account) {
+        setAuthStatus("邮箱或密码不正确。如果还没有账号，请先注册。");
+        setIsAuthenticating(false);
+        return;
+      }
+
+      window.localStorage.setItem("polytalk-alpha-local-session", account.id);
+      setSessionUserId(account.id);
+      setActiveViewerId(account.id);
+      setEmail(account.email);
+      setDisplayName(account.displayName);
+      setLanguage(account.language);
+      setAuthStatus("演示账号登录成功，已进入工作台。");
+      setStage("home");
+      setIsAuthenticating(false);
+      return;
+    }
 
     try {
       const { data, error } = await withTimeout(
@@ -958,7 +1263,7 @@ export default function Home() {
       );
 
       if (error) {
-        setAuthStatus(error.message);
+        setAuthStatus(authErrorMessage(error.message));
         return;
       }
 
@@ -1273,10 +1578,6 @@ export default function Home() {
         });
         const data = (await response.json()) as DemoRoomApiResponse;
         if (!response.ok || !data.room) throw new Error(data.error ?? "Demo reaction failed");
-
-        setRoomMembers(data.room.members);
-        setMessages(data.room.messages);
-        setFiles(data.room.files);
       } catch (error) {
         console.error(error);
         toggleReactionLocally(messageId, reactionKey, reactor.id);
@@ -1316,10 +1617,85 @@ export default function Home() {
     }
   }
 
+  function toggleSpeechRecognition() {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const recognitionWindow = window as SpeechRecognitionWindow;
+    const Recognition = recognitionWindow.SpeechRecognition ?? recognitionWindow.webkitSpeechRecognition;
+
+    if (!Recognition) {
+      setSpeechSupported(false);
+      setRoomStatus("Voice input is not supported in this browser. Please use Chrome or Edge.");
+      return;
+    }
+
+    const speaker = isPublicDemoRoom ? currentMember : activeViewer;
+    const recognition = new Recognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = speechRecognitionLocales[speaker.language];
+    speechBaseTextRef.current = messageText;
+    speechFinalTextRef.current = "";
+
+    recognition.onresult = (event) => {
+      let finalTranscript = "";
+      let interimTranscript = "";
+
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const transcript = result[0]?.transcript ?? "";
+        if (result.isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+
+      speechFinalTextRef.current = appendSpeechText(speechFinalTextRef.current, finalTranscript, speaker.language);
+      const recognizedText = appendSpeechText(speechFinalTextRef.current, interimTranscript, speaker.language);
+      setMessageText(appendSpeechText(speechBaseTextRef.current, recognizedText, speaker.language));
+    };
+
+    recognition.onerror = (event) => {
+      console.error(event);
+      setIsListening(false);
+      setRoomStatus(
+        event.error === "not-allowed"
+          ? "Microphone permission was blocked. Please allow microphone access and try again."
+          : "Voice recognition failed. Please try again.",
+      );
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+      speechBaseTextRef.current = "";
+      speechFinalTextRef.current = "";
+    };
+
+    recognitionRef.current = recognition;
+    setIsListening(true);
+    setRoomStatus(`Listening to ${speaker.name}. Speak now, then tap the microphone again to stop.`);
+
+    try {
+      recognition.start();
+    } catch (error) {
+      console.error(error);
+      setIsListening(false);
+      recognitionRef.current = null;
+      setRoomStatus("Voice recognition could not start. Please try again.");
+    }
+  }
+
   async function sendMessage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = messageText.trim();
     if (!text) return;
+    recognitionRef.current?.stop();
 
     const sender = isPublicDemoRoom ? currentMember : activeViewer;
     const optimisticMessageId = crypto.randomUUID();
@@ -1336,6 +1712,64 @@ export default function Home() {
 
     setMessageText("");
     setMessages((current) => [...current, optimisticMessage]);
+
+    if (isPublicDemoRoom && currentRoomId) {
+      try {
+        const response = await fetch("/api/demo/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "send",
+            roomId: currentRoomId,
+            member: currentMember,
+            message: optimisticMessage,
+          }),
+        });
+        const data = (await response.json()) as DemoRoomApiResponse;
+        if (!response.ok || !data.room) throw new Error(data.error ?? "Demo message failed");
+
+        setRoomStatus("消息已发送，正在后台生成翻译。");
+
+        void translateText(text, sender.language)
+          .then(async (translations) => {
+            const translatedMessage = {
+              ...optimisticMessage,
+              translations,
+              isPending: false,
+            };
+
+            setMessages((current) =>
+              current.map((message) => (message.id === optimisticMessageId ? translatedMessage : message)),
+            );
+
+            await fetch("/api/demo/rooms", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "updateMessage",
+                roomId: currentRoomId,
+                member: currentMember,
+                message: translatedMessage,
+              }),
+            });
+          })
+          .catch((error) => {
+            console.error(error);
+            setMessages((current) =>
+              current.map((message) =>
+                message.id === optimisticMessageId ? { ...message, isPending: false } : message,
+              ),
+            );
+            setRoomStatus("消息已发送，但翻译生成失败。");
+          });
+        return;
+      } catch (error) {
+        console.error(error);
+        setMessages((current) => current.filter((message) => message.id !== optimisticMessageId));
+        setRoomStatus("公开测试房间消息发送失败，请稍后再试。");
+        return;
+      }
+    }
     setRoomStatus("正在生成中/韩/英翻译...");
     const translations = await translateText(text, sender.language);
 
@@ -2156,6 +2590,16 @@ export default function Home() {
                   value={messageText}
                   onChange={(event) => setMessageText(event.target.value)}
                 />
+                <button
+                  aria-label={isListening ? "Stop voice input" : "Start voice input"}
+                  className={isListening ? "voice-button listening" : "voice-button"}
+                  disabled={!speechSupported}
+                  onClick={toggleSpeechRecognition}
+                  title={speechSupported ? "Voice input" : "Voice input is not supported in this browser"}
+                  type="button"
+                >
+                  {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                </button>
                 <button className="send-button" type="submit">
                   <ArrowUp size={18} />
                 </button>

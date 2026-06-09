@@ -21,6 +21,7 @@ type DemoMessage = {
   attachmentId?: string | null;
   fileName?: string;
   createdAt: string;
+  isPending?: boolean;
   reactions?: MessageReactions;
 };
 
@@ -32,6 +33,7 @@ type DemoRoom = {
   messages: DemoMessage[];
   files: string[];
   createdAt: number;
+  updatedAt: number;
 };
 
 type DemoStore = {
@@ -74,20 +76,29 @@ function toggleReaction(message: DemoMessage, reactionKey: ReactionKey, userId: 
   };
 }
 
-function serializeRoom(room: DemoRoom) {
+function serializeRoom(room: DemoRoom, options?: { memberCount?: number; messageCount?: number; fileCount?: number }) {
+  const memberCount = Math.max(0, options?.memberCount ?? 0);
+  const messageCount = Math.max(0, options?.messageCount ?? 0);
+  const fileCount = Math.max(0, options?.fileCount ?? 0);
+  const messageStart = options ? Math.max(0, messageCount - 20) : 0;
+
   return {
     id: room.id,
     title: room.title,
     joinCode: room.joinCode,
-    members: room.members,
-    messages: room.messages,
-    files: room.files,
+    members: room.members.slice(memberCount),
+    messages: room.messages.slice(messageStart),
+    files: room.files.slice(fileCount),
+    memberCount: room.members.length,
+    messageCount: room.messages.length,
+    fileCount: room.files.length,
+    updatedAt: room.updatedAt,
   };
 }
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
-    action: "create" | "join" | "sync" | "send" | "addFile" | "react";
+    action: "create" | "join" | "sync" | "send" | "updateMessage" | "addFile" | "react";
     title?: string;
     joinCode?: string;
     roomId?: string;
@@ -96,6 +107,9 @@ export async function POST(request: Request) {
     messageId?: string;
     fileName?: string;
     reactionKey?: ReactionKey;
+    memberCount?: number;
+    messageCount?: number;
+    fileCount?: number;
   };
 
   if (body.action === "create") {
@@ -111,6 +125,7 @@ export async function POST(request: Request) {
       messages: [],
       files: [],
       createdAt: Date.now(),
+      updatedAt: Date.now(),
     };
 
     store.rooms.set(room.id, room);
@@ -128,24 +143,50 @@ export async function POST(request: Request) {
 
   if (body.member) {
     upsertMember(room, body.member);
+    room.updatedAt = Date.now();
   }
 
   if (body.action === "send" && body.message) {
     if (!room.messages.some((message) => message.id === body.message?.id)) {
       room.messages.push(body.message);
+      room.updatedAt = Date.now();
+    }
+  }
+
+  if (body.action === "updateMessage" && body.message) {
+    const existingIndex = room.messages.findIndex((message) => message.id === body.message?.id);
+    if (existingIndex >= 0) {
+      room.messages[existingIndex] = {
+        ...room.messages[existingIndex],
+        ...body.message,
+      };
+      room.updatedAt = Date.now();
     }
   }
 
   if (body.action === "addFile" && body.fileName && !room.files.includes(body.fileName)) {
     room.files.push(body.fileName);
+    room.updatedAt = Date.now();
   }
 
   if (body.action === "react" && body.messageId && body.reactionKey && body.member) {
     const message = room.messages.find((item) => item.id === body.messageId);
     if (message) {
       toggleReaction(message, body.reactionKey, body.member.id);
+      room.updatedAt = Date.now();
     }
   }
 
-  return NextResponse.json({ room: serializeRoom(room) });
+  return NextResponse.json({
+    room: serializeRoom(
+      room,
+      body.action === "sync"
+        ? {
+            memberCount: body.memberCount,
+            messageCount: body.messageCount,
+            fileCount: body.fileCount,
+          }
+        : undefined,
+    ),
+  });
 }
