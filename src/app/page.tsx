@@ -1790,107 +1790,110 @@ export default function Home() {
   }
 
   async function publishMessage(optimisticMessage: Message, textForTranslation: string, sender: Member) {
-    setMessages((current) => [...current, optimisticMessage]);
-
     if (isPublicDemoRoom && currentRoomId) {
-      try {
-        const response = await fetch("/api/demo/rooms", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "send",
-            roomId: currentRoomId,
-            joinCode: roomCode,
-            member: currentMember,
-            message: optimisticMessage,
-          }),
+      const saveMessage = fetch("/api/demo/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send",
+          roomId: currentRoomId,
+          joinCode: roomCode,
+          member: currentMember,
+          message: optimisticMessage,
+        }),
+      })
+        .then(async (response) => {
+          const data = (await response.json()) as DemoRoomApiResponse;
+          if (!response.ok || !data.room) throw new Error(data.error ?? "Demo message failed");
+          return data.room;
+        })
+        .catch((error) => {
+          console.error(error);
+          setRoomStatus("消息已显示在本地，但远端同步失败。请稍后再试。");
+          return null;
         });
-        const data = (await response.json()) as DemoRoomApiResponse;
-        if (!response.ok || !data.room) throw new Error(data.error ?? "Demo message failed");
 
-        setRoomStatus("消息已发送，正在生成翻译...");
+      void translateText(textForTranslation, sender.language)
+        .then(async (translations) => {
+          const translatedMessage: Message = {
+            ...optimisticMessage,
+            translations,
+            isPending: false,
+          };
 
-        void translateText(textForTranslation, sender.language)
-          .then(async (translations) => {
-            const translatedMessage: Message = {
-              ...optimisticMessage,
-              translations,
-              isPending: false,
-            };
+          setMessages((current) =>
+            current.map((message) => (message.id === optimisticMessage.id ? translatedMessage : message)),
+          );
 
-            setMessages((current) =>
-              current.map((message) => (message.id === optimisticMessage.id ? translatedMessage : message)),
-            );
-
-            await fetch("/api/demo/rooms", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "updateMessage",
-                roomId: currentRoomId,
-                joinCode: roomCode,
-                member: currentMember,
-                message: translatedMessage,
-              }),
-            });
-          })
-          .catch((error) => {
-            console.error(error);
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === optimisticMessage.id ? { ...message, isPending: false } : message,
-              ),
-            );
-            setRoomStatus("消息已发送，但翻译生成失败。");
+          await saveMessage;
+          await fetch("/api/demo/rooms", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "updateMessage",
+              roomId: currentRoomId,
+              joinCode: roomCode,
+              member: currentMember,
+              message: translatedMessage,
+            }),
           });
-        return;
-      } catch (error) {
-        console.error(error);
-        setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id));
-        setRoomStatus("公开测试房间消息发送失败，请稍后再试。");
-        return;
-      }
-    }
+        })
+        .catch((error) => {
+          console.error(error);
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === optimisticMessage.id ? { ...message, isPending: false } : message,
+            ),
+          );
+          setRoomStatus("消息已发送，但翻译生成失败。");
+        });
 
-    setRoomStatus("正在生成中 / 韩 / 英翻译...");
-    const translations = await translateText(textForTranslation, sender.language);
-    const nextMessage: Message = {
-      ...optimisticMessage,
-      translations,
-      isPending: false,
-    };
-
-    if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
-      const { error } = await supabase.from("messages").insert({
-        id: nextMessage.id,
-        room_id: currentRoomId,
-        sender_id: sessionUserId,
-        kind: nextMessage.kind,
-        original_language: nextMessage.originalLanguage,
-        original_text: nextMessage.originalText,
-        translations: nextMessage.translations,
-        voice_url: nextMessage.voiceUrl ?? null,
-        voice_duration: nextMessage.voiceDuration ?? null,
-      });
-
-      if (error) {
-        setMessages((current) => current.filter((message) => message.id !== optimisticMessage.id));
-        setRoomStatus(`发送失败：${error.message}`);
-        return;
-      }
-
-      await loadMessages(currentRoomId);
-      await loadRoomMembers(currentRoomId);
-      setRoomStatus("消息已写入 Supabase。");
       return;
     }
 
-    setMessages((current) => current.map((message) => (message.id === optimisticMessage.id ? nextMessage : message)));
+    void translateText(textForTranslation, sender.language)
+      .then(async (translations) => {
+        const nextMessage: Message = {
+          ...optimisticMessage,
+          translations,
+          isPending: false,
+        };
+
+        setMessages((current) => current.map((message) => (message.id === optimisticMessage.id ? nextMessage : message)));
+
+        if (isDbRoom && currentRoomId && sessionUserId && activeViewer.id === sessionUserId) {
+          const { error } = await supabase.from("messages").insert({
+            id: nextMessage.id,
+            room_id: currentRoomId,
+            sender_id: sessionUserId,
+            kind: nextMessage.kind,
+            original_language: nextMessage.originalLanguage,
+            original_text: nextMessage.originalText,
+            translations: nextMessage.translations,
+            voice_url: nextMessage.voiceUrl ?? null,
+            voice_duration: nextMessage.voiceDuration ?? null,
+          });
+
+          if (error) {
+            setRoomStatus(`消息已显示在本地，但数据库保存失败：${error.message}`);
+            return;
+          }
+
+          setRoomStatus("消息已发送。");
+        }
+      })
+      .catch((error) => {
+        console.error(error);
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === optimisticMessage.id ? { ...message, isPending: false } : message,
+          ),
+        );
+        setRoomStatus("消息已显示在本地，但翻译生成失败。");
+      });
   }
 
   async function publishVoiceMessage(voiceMessage: Message) {
-    setMessages((current) => [...current, voiceMessage]);
-
     if (isPublicDemoRoom && currentRoomId) {
       try {
         const response = await fetch("/api/demo/rooms", {
@@ -1908,8 +1911,7 @@ export default function Home() {
         if (!response.ok || !data.room) throw new Error(data.error ?? "Demo voice message failed");
       } catch (error) {
         console.error(error);
-        setMessages((current) => current.filter((message) => message.id !== voiceMessage.id));
-        setRoomStatus("语音消息发送失败，请稍后再试。");
+        setRoomStatus("语音已显示在本地，但远端同步失败。请稍后再试。");
       }
       return;
     }
@@ -1928,13 +1930,10 @@ export default function Home() {
       });
 
       if (error) {
-        setMessages((current) => current.filter((message) => message.id !== voiceMessage.id));
-        setRoomStatus(`语音发送失败：${error.message}`);
+        setRoomStatus(`语音已显示在本地，但数据库保存失败：${error.message}`);
         return;
       }
 
-      await loadMessages(currentRoomId);
-      await loadRoomMembers(currentRoomId);
       setRoomStatus("语音消息已发送。长按或右键语音条可转文字。");
       return;
     }
@@ -1960,7 +1959,8 @@ export default function Home() {
     };
 
     setMessageText("");
-    await publishMessage(optimisticMessage, text, sender);
+    setMessages((current) => [...current, optimisticMessage]);
+    void publishMessage(optimisticMessage, text, sender);
   }
 
   async function startVoiceRecording() {
@@ -2038,9 +2038,6 @@ export default function Home() {
 
     try {
       const localVoiceUrl = URL.createObjectURL(blob);
-      const uploadedVoiceUrl = await maybeUploadVoice(blob);
-      const fallbackVoiceUrl = isPublicDemoRoom && !uploadedVoiceUrl ? await blobToDataUrl(blob) : localVoiceUrl;
-
       const voiceMessage: Message = {
         id: crypto.randomUUID(),
         senderId: sender.id,
@@ -2048,7 +2045,7 @@ export default function Home() {
         originalLanguage: sender.language,
         originalText: "[voice message]",
         translations: {},
-        voiceUrl: uploadedVoiceUrl ?? fallbackVoiceUrl,
+        voiceUrl: localVoiceUrl,
         voiceDuration: duration,
         createdAt: nowLabel(),
         isPending: false,
@@ -2056,7 +2053,28 @@ export default function Home() {
 
       updateRecorderState("idle");
       setRecordingSeconds(0);
-      await publishVoiceMessage(voiceMessage);
+      setMessages((current) => [...current, voiceMessage]);
+      setRoomStatus("语音消息已发送。长按或右键语音条可转文字。");
+
+      void (async () => {
+        const uploadedVoiceUrl = await maybeUploadVoice(blob);
+        const shareableVoiceUrl = uploadedVoiceUrl ?? (isPublicDemoRoom ? await blobToDataUrl(blob) : localVoiceUrl);
+        const sharedVoiceMessage = {
+          ...voiceMessage,
+          voiceUrl: shareableVoiceUrl,
+        };
+
+        if (shareableVoiceUrl !== localVoiceUrl) {
+          setMessages((current) =>
+            current.map((message) => (message.id === voiceMessage.id ? sharedVoiceMessage : message)),
+          );
+        }
+
+        await publishVoiceMessage(sharedVoiceMessage);
+      })().catch((error) => {
+        console.error(error);
+        setRoomStatus("语音已显示在本地，但远端同步失败。请稍后再试。");
+      });
     } catch (error) {
       console.error(error);
       updateRecorderState("idle");
