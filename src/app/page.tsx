@@ -954,6 +954,7 @@ export default function Home() {
   const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>(() => loadLocalHistory(getOrCreateDemoUserId()));
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isHistoryView, setIsHistoryView] = useState(false);
+  const [roomDialog, setRoomDialog] = useState<"create" | "join" | null>(null);
   const [activeVoiceMenuId, setActiveVoiceMenuId] = useState<string | null>(null);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [voiceTranscriptSelection, setVoiceTranscriptSelection] = useState<VoiceTranscriptSelection | null>(null);
@@ -1623,6 +1624,7 @@ export default function Home() {
       setMessages(data.room.messages);
       setFiles(data.room.files);
       setRoomStatus(statusText.createdPublic);
+      setRoomDialog(null);
     } catch (error) {
       console.error(error);
       setIsPublicDemoRoom(false);
@@ -1697,6 +1699,7 @@ export default function Home() {
       setFiles(data.room.files);
       setActiveViewerId(currentMember.id);
       setRoomStatus(statusText.joinedPublic);
+      setRoomDialog(null);
     } catch (error) {
       console.error(error);
       setIsPublicDemoRoom(false);
@@ -3039,11 +3042,7 @@ export default function Home() {
                 <h2>{roomChoice.createTitle}</h2>
               </div>
               <p className="option-description">{roomChoice.createDescription}</p>
-              <label>
-                <span>{copy.roomName}</span>
-                <input value={roomTitle} onChange={(event) => setRoomTitle(event.target.value)} />
-              </label>
-              <button className="primary-action" onClick={createRoom} type="button">
+              <button className="primary-action" onClick={() => setRoomDialog("create")} type="button">
                 {roomChoice.create}
               </button>
             </article>
@@ -3054,21 +3053,58 @@ export default function Home() {
                 <h2>{roomChoice.joinTitle}</h2>
               </div>
               <p className="option-description">{roomChoice.joinDescription}</p>
-              <label>
-                <span>{copy.faceCode}</span>
-                <input
-                  inputMode="numeric"
-                  maxLength={4}
-                  placeholder={roomChoice.joinPlaceholder}
-                  value={roomCode}
-                  onChange={(event) => setRoomCode(event.target.value.replace(/\D/g, "").slice(0, 4))}
-                />
-              </label>
-              <button className="secondary-action" onClick={joinRoom} type="button">
+              <button className="secondary-action" onClick={() => setRoomDialog("join")} type="button">
                 {roomChoice.join}
               </button>
             </article>
           </div>
+
+          {roomDialog ? (
+            <div className="history-overlay" role="dialog" aria-modal="true" aria-label={roomDialog === "create" ? roomChoice.createTitle : roomChoice.joinTitle}>
+              <button className="history-backdrop" onClick={() => setRoomDialog(null)} type="button" />
+              <section className="history-panel history-modal room-form-modal">
+                <div className="side-title-row">
+                  <div>
+                    <p className="label">{roomDialog === "create" ? roomChoice.createTitle : roomChoice.joinTitle}</p>
+                    <small>{roomDialog === "create" ? roomChoice.createDescription : roomChoice.joinDescription}</small>
+                  </div>
+                  <button className="mini-action" onClick={() => setRoomDialog(null)} type="button">
+                    {homeText.close}
+                  </button>
+                </div>
+
+                <div className="form-grid">
+                  {roomDialog === "create" ? (
+                    <>
+                      <label>
+                        <span>{copy.roomName}</span>
+                        <input value={roomTitle} onChange={(event) => setRoomTitle(event.target.value)} />
+                      </label>
+                      <button className="primary-action" onClick={createRoom} type="button">
+                        {roomChoice.create}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <label>
+                        <span>{copy.faceCode}</span>
+                        <input
+                          inputMode="numeric"
+                          maxLength={4}
+                          placeholder={roomChoice.joinPlaceholder}
+                          value={roomCode}
+                          onChange={(event) => setRoomCode(event.target.value.replace(/\D/g, "").slice(0, 4))}
+                        />
+                      </label>
+                      <button className="secondary-action" onClick={joinRoom} type="button">
+                        {roomChoice.join}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </section>
+            </div>
+          ) : null}
         </section>
       </main>
     );

@@ -471,6 +471,14 @@ input:hover {
   line-height: 1.45;
 }
 
+.room-form-modal {
+  width: min(430px, calc(100vw - 32px));
+}
+
+.room-form-modal .form-grid {
+  margin-top: 16px;
+}
+
 .history-list {
   display: grid;
   gap: 8px;
