@@ -1125,6 +1125,33 @@ function shouldKeepLocalMessage(localMessage: Message, incomingMessage: Message)
   return Boolean(localMessage.isPending) === false && localHasRealTranslation && !incomingHasRealTranslation;
 }
 
+function mergeMessageForDisplay(localMessage: Message, incomingMessage: Message): Message {
+  return {
+    ...localMessage,
+    ...incomingMessage,
+    isPending: incomingMessage.isPending ?? false,
+    quote: incomingMessage.quote ?? localMessage.quote ?? null,
+  };
+}
+
+function mergeMessageList(current: Message[], incoming: Message[]) {
+  const incomingById = new Map(incoming.map((message) => [message.id, message]));
+  let didReplace = false;
+
+  const replacedMessages = current.map((message) => {
+    const incomingMessage = incomingById.get(message.id);
+    if (!incomingMessage || isSameMessage(message, incomingMessage)) return message;
+    if (shouldKeepLocalMessage(message, incomingMessage)) return message;
+    didReplace = true;
+    return mergeMessageForDisplay(message, incomingMessage);
+  });
+
+  const existingIds = new Set(replacedMessages.map((item) => item.id));
+  const nextMessages = incoming.filter((item) => !existingIds.has(item.id));
+
+  return nextMessages.length || didReplace ? [...replacedMessages, ...nextMessages] : current;
+}
+
 export default function Home() {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const supabaseConfigured = useMemo(() => isSupabaseConfigured(), []);
@@ -1318,20 +1345,7 @@ export default function Home() {
     }
 
     if (room.messages.length) {
-      setMessages((current) => {
-        const incomingById = new Map(room.messages.map((message) => [message.id, message]));
-        let didReplace = false;
-        const replacedMessages = current.map((message) => {
-          const incomingMessage = incomingById.get(message.id);
-          if (!incomingMessage || isSameMessage(message, incomingMessage)) return message;
-          if (shouldKeepLocalMessage(message, incomingMessage)) return message;
-          didReplace = true;
-          return incomingMessage;
-        });
-        const existingIds = new Set(replacedMessages.map((item) => item.id));
-        const nextMessages = room.messages.filter((item) => !existingIds.has(item.id));
-        return nextMessages.length || didReplace ? [...replacedMessages, ...nextMessages] : current;
-      });
+      setMessages((current) => mergeMessageList(current, room.messages));
     }
 
     if (room.files.length) {
@@ -1383,7 +1397,8 @@ export default function Home() {
         return;
       }
 
-      setMessages(((data ?? []) as unknown as DbMessageRow[]).map(messageFromDbRow));
+      const loadedMessages = ((data ?? []) as unknown as DbMessageRow[]).map(messageFromDbRow);
+      setMessages((current) => mergeMessageList(current, loadedMessages));
     },
     [supabase],
   );
@@ -1549,11 +1564,7 @@ export default function Home() {
             if (existingIndex === -1) return [...current, nextMessage];
 
             const nextMessages = [...current];
-            nextMessages[existingIndex] = {
-              ...current[existingIndex],
-              ...nextMessage,
-              isPending: false,
-            };
+            nextMessages[existingIndex] = mergeMessageForDisplay(current[existingIndex], nextMessage);
             return nextMessages;
           });
         },
@@ -4021,7 +4032,7 @@ export default function Home() {
                   <div className="bubble">
                     {message.quote ? (
                       <div className="quote-preview">
-                        <strong>{message.quote.senderName}</strong>
+                        <strong>{copy.replyingTo(message.quote.senderName)}</strong>
                         <span>{quoteText(message.quote)}</span>
                       </div>
                     ) : null}
